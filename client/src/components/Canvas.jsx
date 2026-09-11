@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { drawItem, drawStroke } from '../lib/draw'
+import { drawItem, drawStroke, hitTestText } from '../lib/draw'
 import TextEditor from './TextEditor'
 
 const createId = () =>
@@ -24,10 +24,13 @@ export default function Canvas({
   onStrokePoints,
   onStrokeComplete,
   onAddText,
+  onMoveText,
+  onCommitMove,
 }) {
   const canvasRef = useRef(null)
   const ctxRef = useRef(null)
   const currentRef = useRef(null)
+  const dragRef = useRef(null)
   const sentPointsRef = useRef(0)
   const frameRef = useRef(0)
   const itemsRef = useRef(items)
@@ -59,14 +62,26 @@ export default function Canvas({
     onStrokePoints?.(stroke.id, pending)
   }, [onStrokePoints])
 
+  // A drag produces far more pointer events than frames, so the dragged position
+  // is published once per frame rather than once per event.
+  const flushDrag = useCallback(() => {
+    const drag = dragRef.current
+    if (!drag?.pending) return
+    const { x, y } = drag.pending
+    drag.pending = null
+    drag.last = { x, y }
+    onMoveText(drag.id, x, y)
+  }, [onMoveText])
+
   const scheduleRedraw = useCallback(() => {
     if (frameRef.current) return
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = 0
       redraw()
       flushPoints()
+      flushDrag()
     })
-  }, [redraw, flushPoints])
+  }, [redraw, flushPoints, flushDrag])
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -123,19 +138,32 @@ export default function Canvas({
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const canvas = canvasRef.current
     const rect = canvas.getBoundingClientRect()
+    const x = event.clientX - rect.left
+    const y = event.clientY - rect.top
 
     if (tool === 'text') {
       // Without this the browser's own focus handling for the click lands on the
       // canvas right after the editor mounts, blurring it away instantly.
       event.preventDefault()
+
+      const hit = hitTestText(ctxRef.current, itemsRef.current, x, y)
+      if (hit) {
+        // Grabbing existing text moves it instead of starting a new one.
+        closeDraft(draft)
+        canvas.setPointerCapture(event.pointerId)
+        dragRef.current = {
+          id: hit.id,
+          grabX: x - hit.x,
+          grabY: y - hit.y,
+          from: { x: hit.x, y: hit.y },
+          last: { x: hit.x, y: hit.y },
+          pending: null,
+        }
+        return
+      }
+
       commitDraft(draft)
-      setDraft({
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top,
-        color,
-        size: fontSize,
-        text: '',
-      })
+      setDraft({ x, y, color, size: fontSize, text: '' })
       return
     }
 
@@ -156,10 +184,35 @@ export default function Canvas({
   }
 
   const handlePointerMove = (event) => {
-    const stroke = currentRef.current
-    if (!stroke) return
+    const canvas = canvasRef.current
+    const rect = canvas.getBoundingClientRect()
+    const drag = dragRef.current
 
-    const rect = canvasRef.current.getBoundingClientRect()
+    if (drag) {
+      drag.pending = {
+        x: event.clientX - rect.left - drag.grabX,
+        y: event.clientY - rect.top - drag.grabY,
+      }
+      scheduleRedraw()
+      return
+    }
+
+    const stroke = currentRef.current
+    if (!stroke) {
+      if (tool === 'text') {
+        // Hint that the text under the pointer can be picked up. Set straight on
+        // the element, so hovering never re-renders the canvas.
+        const over = hitTestText(
+          ctxRef.current,
+          itemsRef.current,
+          event.clientX - rect.left,
+          event.clientY - rect.top,
+        )
+        canvas.style.cursor = over ? 'move' : ''
+      }
+      return
+    }
+
     const native = event.nativeEvent
     // Coalesced events give us every sample the device reported between frames.
     const samples = native.getCoalescedEvents ? native.getCoalescedEvents() : [native]
@@ -170,11 +223,23 @@ export default function Canvas({
   }
 
   const handlePointerUp = (event) => {
+    const canvas = canvasRef.current
+    const release = () => {
+      if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+    }
+
+    const drag = dragRef.current
+    if (drag) {
+      flushDrag()
+      dragRef.current = null
+      release()
+      onCommitMove(drag.id, drag.from, drag.last)
+      return
+    }
+
     const stroke = currentRef.current
     if (!stroke) return
-
-    const canvas = canvasRef.current
-    if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
+    release()
 
     flushPoints()
     currentRef.current = null

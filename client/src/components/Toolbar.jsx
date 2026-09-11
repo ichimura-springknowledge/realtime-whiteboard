@@ -3,9 +3,9 @@ import { useState } from 'react'
 const COLORS = ['#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
 
 const TOOLS = [
-  { id: 'pen', label: 'ペン' },
-  { id: 'eraser', label: '消しゴム' },
-  { id: 'text', label: '文字' },
+  { id: 'pen', label: 'ペン', hint: 'ドラッグで描画' },
+  { id: 'eraser', label: '消しゴム', hint: 'なぞった部分を消す' },
+  { id: 'text', label: '文字', hint: 'クリックで入力 / 既存の文字はドラッグで移動' },
 ]
 
 const STATUS_LABEL = {
@@ -46,12 +46,13 @@ export default function Toolbar({
   return (
     <header className="toolbar">
       <div className="toolbar__group" role="group" aria-label="ツール">
-        {TOOLS.map(({ id, label }) => (
+        {TOOLS.map(({ id, label, hint }) => (
           <button
             key={id}
             type="button"
             className={`tool${id === tool ? ' tool--active' : ''}`}
             aria-pressed={id === tool}
+            title={hint}
             onClick={() => onToolChange(id)}
           >
             {label}

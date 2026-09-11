@@ -10,34 +10,45 @@ const withoutStroke = (strokes, id) => {
   return next
 }
 
+const moveIn = (items, id, position) =>
+  items.map((item) => (item.id === id ? { ...item, x: position.x, y: position.y } : item))
+
 /**
  * Owns the board state for one room: the items everyone has committed, the
  * strokes other participants are drawing right now, and the socket that ties it
  * all together.
  *
- * Undo is per participant: it takes back the last item *you* added, never
- * someone else's, which is what people expect on a shared board.
+ * Undo walks a per-participant action log (what I added, what I moved), so it
+ * only ever takes back your own work and never someone else's, which is what
+ * people expect on a shared board.
  */
 export function useBoard(room) {
   const socketRef = useRef(null)
   const [items, setItems] = useState([])
   const [liveStrokeMap, setLiveStrokeMap] = useState({})
-  const [myItemIds, setMyItemIds] = useState([])
+  const [history, setHistory] = useState([])
   const [redoStack, setRedoStack] = useState([])
   const [status, setStatus] = useState('connecting')
   const [peers, setPeers] = useState(1)
 
-  // Mirrors of the state above, so the undo/redo callbacks can read the current
-  // history without being re-created on every change.
+  // Mirrors of the state above, so the callbacks below can read the current
+  // board without being re-created on every change.
   const itemsRef = useRef(items)
-  const myItemIdsRef = useRef(myItemIds)
+  const historyRef = useRef(history)
   const redoStackRef = useRef(redoStack)
 
   useEffect(() => {
     itemsRef.current = items
-    myItemIdsRef.current = myItemIds
+    historyRef.current = history
     redoStackRef.current = redoStack
-  }, [items, myItemIds, redoStack])
+  }, [items, history, redoStack])
+
+  const resetHistory = useCallback(() => {
+    historyRef.current = []
+    redoStackRef.current = []
+    setHistory([])
+    setRedoStack([])
+  }, [])
 
   useEffect(() => {
     const socket = io(SERVER_URL, { query: { room } })
@@ -50,8 +61,7 @@ export function useBoard(room) {
     socket.on('board:init', (payload) => {
       setItems(payload?.items ?? [])
       setLiveStrokeMap({})
-      setMyItemIds([])
-      setRedoStack([])
+      resetHistory()
     })
     socket.on('room:peers', (count) => setPeers(count || 1))
 
@@ -76,22 +86,24 @@ export function useBoard(room) {
     socket.on('item:remove', ({ id }) => {
       setItems((prev) => prev.filter((item) => item.id !== id))
     })
+    socket.on('item:move', ({ id, x, y }) => {
+      setItems((prev) => moveIn(prev, id, { x, y }))
+    })
     socket.on('board:clear', () => {
       setItems([])
       setLiveStrokeMap({})
-      setMyItemIds([])
-      setRedoStack([])
+      resetHistory()
     })
 
     return () => {
       socket.close()
       socketRef.current = null
     }
-  }, [room])
+  }, [room, resetHistory])
 
-  const trackMine = useCallback((id) => {
-    myItemIdsRef.current = [...myItemIdsRef.current, id]
-    setMyItemIds(myItemIdsRef.current)
+  const pushAction = useCallback((action) => {
+    historyRef.current = [...historyRef.current, action]
+    setHistory(historyRef.current)
     redoStackRef.current = []
     setRedoStack(redoStackRef.current)
   }, [])
@@ -99,10 +111,10 @@ export function useBoard(room) {
   const addItem = useCallback(
     (item) => {
       setItems((prev) => [...prev, item])
-      trackMine(item.id)
+      pushAction({ type: 'add', id: item.id })
       socketRef.current?.emit('item:add', item)
     },
-    [trackMine],
+    [pushAction],
   )
 
   const startStroke = useCallback((stroke) => {
@@ -116,63 +128,96 @@ export function useBoard(room) {
   const completeStroke = useCallback(
     (stroke) => {
       setItems((prev) => [...prev, stroke])
-      trackMine(stroke.id)
+      pushAction({ type: 'add', id: stroke.id })
       socketRef.current?.emit('stroke:end', stroke)
     },
-    [trackMine],
+    [pushAction],
+  )
+
+  const applyMove = useCallback((id, position) => {
+    itemsRef.current = moveIn(itemsRef.current, id, position)
+    setItems(itemsRef.current)
+    socketRef.current?.emit('item:move', { id, x: position.x, y: position.y })
+  }, [])
+
+  /** Live position update while an item is being dragged; not a history entry. */
+  const moveItem = useCallback(
+    (id, x, y) => {
+      applyMove(id, { x, y })
+    },
+    [applyMove],
+  )
+
+  /** Records a finished drag so it can be undone. */
+  const commitMove = useCallback(
+    (id, from, to) => {
+      if (from.x === to.x && from.y === to.y) return
+      pushAction({ type: 'move', id, from, to })
+    },
+    [pushAction],
   )
 
   const undo = useCallback(() => {
-    const ids = myItemIdsRef.current
-    for (let i = ids.length - 1; i >= 0; i--) {
-      const id = ids[i]
-      const item = itemsRef.current.find((candidate) => candidate.id === id)
-      // Skip ids that are already gone (someone cleared the board, say).
+    const actions = historyRef.current
+    for (let i = actions.length - 1; i >= 0; i--) {
+      const action = actions[i]
+      const item = itemsRef.current.find((candidate) => candidate.id === action.id)
+      // Skip actions whose item is already gone (someone cleared the board, say).
       if (!item) continue
 
-      myItemIdsRef.current = [...ids.slice(0, i), ...ids.slice(i + 1)]
-      setMyItemIds(myItemIdsRef.current)
-      redoStackRef.current = [...redoStackRef.current, item]
+      historyRef.current = [...actions.slice(0, i), ...actions.slice(i + 1)]
+      setHistory(historyRef.current)
+
+      if (action.type === 'move') {
+        redoStackRef.current = [...redoStackRef.current, action]
+        applyMove(action.id, action.from)
+      } else {
+        // Snapshot the item as it stands now, so redo brings back any later move.
+        redoStackRef.current = [...redoStackRef.current, { type: 'add', id: action.id, item }]
+        itemsRef.current = itemsRef.current.filter((candidate) => candidate.id !== action.id)
+        setItems(itemsRef.current)
+        socketRef.current?.emit('item:remove', { id: action.id })
+      }
       setRedoStack(redoStackRef.current)
-      itemsRef.current = itemsRef.current.filter((candidate) => candidate.id !== id)
-      setItems(itemsRef.current)
-      socketRef.current?.emit('item:remove', { id })
       return
     }
-  }, [])
+  }, [applyMove])
 
   const redo = useCallback(() => {
     const stack = redoStackRef.current
     if (stack.length === 0) return
-    const item = stack[stack.length - 1]
+    const action = stack[stack.length - 1]
 
     redoStackRef.current = stack.slice(0, -1)
     setRedoStack(redoStackRef.current)
-    myItemIdsRef.current = [...myItemIdsRef.current, item.id]
-    setMyItemIds(myItemIdsRef.current)
-    itemsRef.current = itemsRef.current.some((candidate) => candidate.id === item.id)
-      ? itemsRef.current
-      : [...itemsRef.current, item]
-    setItems(itemsRef.current)
-    socketRef.current?.emit('item:add', item)
-  }, [])
+
+    if (action.type === 'move') {
+      historyRef.current = [...historyRef.current, action]
+      applyMove(action.id, action.to)
+    } else {
+      historyRef.current = [...historyRef.current, { type: 'add', id: action.id }]
+      if (!itemsRef.current.some((candidate) => candidate.id === action.id)) {
+        itemsRef.current = [...itemsRef.current, action.item]
+        setItems(itemsRef.current)
+      }
+      socketRef.current?.emit('item:add', action.item)
+    }
+    setHistory(historyRef.current)
+  }, [applyMove])
 
   const clearBoard = useCallback(() => {
     itemsRef.current = []
-    myItemIdsRef.current = []
-    redoStackRef.current = []
     setItems([])
     setLiveStrokeMap({})
-    setMyItemIds([])
-    setRedoStack([])
+    resetHistory()
     socketRef.current?.emit('board:clear')
-  }, [])
+  }, [resetHistory])
 
   const liveStrokes = useMemo(() => Object.values(liveStrokeMap), [liveStrokeMap])
   const canUndo = useMemo(() => {
     const present = new Set(items.map((item) => item.id))
-    return myItemIds.some((id) => present.has(id))
-  }, [items, myItemIds])
+    return history.some((action) => present.has(action.id))
+  }, [items, history])
 
   return {
     items,
@@ -185,6 +230,8 @@ export function useBoard(room) {
     appendPoints,
     completeStroke,
     addItem,
+    moveItem,
+    commitMove,
     undo,
     redo,
     clearBoard,

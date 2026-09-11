@@ -153,6 +153,17 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('item:add', item)
   })
 
+  // Only text carries a position; strokes are fixed where they were drawn.
+  socket.on('item:move', (payload) => {
+    const id = sanitizeId(payload?.id)
+    if (!id || !Number.isFinite(payload.x) || !Number.isFinite(payload.y)) return
+    const item = room.items.find((candidate) => candidate.id === id)
+    if (!item || item.type !== 'text') return
+    item.x = payload.x
+    item.y = payload.y
+    socket.to(roomId).emit('item:move', { id, x: item.x, y: item.y })
+  })
+
   socket.on('item:remove', (payload) => {
     const id = sanitizeId(payload?.id)
     if (!id) return

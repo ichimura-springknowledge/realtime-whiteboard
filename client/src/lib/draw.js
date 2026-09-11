@@ -83,3 +83,38 @@ export function drawItem(ctx, item, options) {
   if (item?.type === 'text') drawText(ctx, item)
   else drawStroke(ctx, item, options)
 }
+
+const HIT_PADDING = 4
+
+/** Bounding box of a committed text item, in canvas coordinates. */
+export function textBounds(ctx, item) {
+  ctx.save()
+  ctx.font = `${item.size}px ${TEXT_FONT}`
+  const lines = item.text.split('\n')
+  const width = Math.max(...lines.map((line) => ctx.measureText(line).width))
+  ctx.restore()
+  return {
+    x: item.x,
+    y: item.y,
+    width,
+    height: lines.length * item.size * TEXT_LINE_HEIGHT,
+  }
+}
+
+/** Topmost text item under the given point, or null. Strokes are not movable. */
+export function hitTestText(ctx, items, x, y) {
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i]
+    if (item.type !== 'text') continue
+    const box = textBounds(ctx, item)
+    if (
+      x >= box.x - HIT_PADDING &&
+      x <= box.x + box.width + HIT_PADDING &&
+      y >= box.y - HIT_PADDING &&
+      y <= box.y + box.height + HIT_PADDING
+    ) {
+      return item
+    }
+  }
+  return null
+}

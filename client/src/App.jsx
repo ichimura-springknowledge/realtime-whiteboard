@@ -68,6 +68,8 @@ export default function App() {
           onStrokePoints={board.appendPoints}
           onStrokeComplete={board.completeStroke}
           onAddText={board.addItem}
+          onMoveText={board.moveItem}
+          onCommitMove={board.commitMove}
         />
       </main>
     </div>
