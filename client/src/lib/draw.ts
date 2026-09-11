@@ -32,7 +32,7 @@ export function strokeOptions(stroke: StrokeItem, { last = true }: DrawOptions =
 const average = (a: number, b: number) => (a + b) / 2
 
 /** Turns the outline points from perfect-freehand into a smooth SVG path. */
-function getSvgPathFromStroke(points: number[][], closed = true): string {
+export function getSvgPathFromStroke(points: number[][], closed = true): string {
   const len = points.length
   if (len < 4) return ''
 

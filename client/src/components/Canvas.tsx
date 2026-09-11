@@ -47,6 +47,7 @@ interface CanvasProps {
   onShapePreview: (shape: ShapeItem) => void
   onCursorMove: (x: number, y: number) => void
   onCursorLeave: () => void
+  onSizeChange: (size: { width: number; height: number }) => void
   onAddItem: (item: BoardItem) => void
   onMoveText: (id: string, x: number, y: number) => void
   onCommitMove: (id: string, from: Position, to: Position) => void
@@ -66,6 +67,7 @@ export default function Canvas({
   onShapePreview,
   onCursorMove,
   onCursorLeave,
+  onSizeChange,
   onAddItem,
   onMoveText,
   onCommitMove,
@@ -82,6 +84,11 @@ export default function Canvas({
   const itemsRef = useRef(items)
   const liveItemsRef = useRef(liveItems)
   const [draft, setDraft] = useState<TextDraft | null>(null)
+  const onSizeChangeRef = useRef(onSizeChange)
+
+  useEffect(() => {
+    onSizeChangeRef.current = onSizeChange
+  }, [onSizeChange])
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current
@@ -165,6 +172,8 @@ export default function Canvas({
       const { width, height } = canvas.getBoundingClientRect()
       canvas.width = Math.max(1, Math.round(width * dpr))
       canvas.height = Math.max(1, Math.round(height * dpr))
+      // Exporting needs the board's size in CSS pixels, which only the canvas knows.
+      onSizeChangeRef.current({ width, height })
       redraw()
     }
 

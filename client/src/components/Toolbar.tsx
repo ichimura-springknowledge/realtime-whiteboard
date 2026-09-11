@@ -39,6 +39,8 @@ interface ToolbarProps {
   onUndo: () => void
   onRedo: () => void
   onClear: () => void
+  onExport: (format: 'png' | 'svg') => void
+  exporting: boolean
   room: string
   status: ConnectionStatus
   peers: number
@@ -56,6 +58,8 @@ export default function Toolbar({
   onUndo,
   onRedo,
   onClear,
+  onExport,
+  exporting,
   room,
   status,
   peers,
@@ -143,6 +147,27 @@ export default function Toolbar({
         </button>
         <button type="button" className="button" onClick={onClear}>
           全消去
+        </button>
+      </div>
+
+      <div className="toolbar__group" role="group" aria-label="書き出し">
+        <button
+          type="button"
+          className="button"
+          onClick={() => onExport('png')}
+          disabled={exporting}
+          title="見たままを PNG 画像で保存"
+        >
+          PNG
+        </button>
+        <button
+          type="button"
+          className="button"
+          onClick={() => onExport('svg')}
+          disabled={exporting}
+          title="拡大しても劣化しない SVG で保存"
+        >
+          SVG
         </button>
       </div>
 

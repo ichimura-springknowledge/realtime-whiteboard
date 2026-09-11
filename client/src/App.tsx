@@ -1,7 +1,14 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Canvas from './components/Canvas'
 import Toolbar from './components/Toolbar'
 import { useBoard } from './hooks/useBoard'
+import {
+  canvasToPngBlob,
+  downloadBlob,
+  exportFilename,
+  renderToCanvas,
+  renderToSvg,
+} from './lib/export'
 import { resolveRoomFromUrl } from './lib/room'
 import type { Tool } from './types'
 import './App.css'
@@ -37,8 +44,34 @@ export default function App() {
   })
   const room = useMemo(() => resolveRoomFromUrl(), [])
   const board = useBoard(room)
+  const [exporting, setExporting] = useState(false)
+  const boardSizeRef = useRef({ width: 0, height: 0 })
 
   const { undo, redo } = board
+
+  const handleExport = useCallback(
+    async (format: 'png' | 'svg') => {
+      setExporting(true)
+      try {
+        const size = boardSizeRef.current
+        if (format === 'svg') {
+          const svg = renderToSvg(board.items, size)
+          downloadBlob(
+            new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }),
+            exportFilename(room, 'svg'),
+          )
+        } else {
+          const blob = await canvasToPngBlob(renderToCanvas(board.items, size))
+          downloadBlob(blob, exportFilename(room, 'png'))
+        }
+      } catch (error) {
+        window.alert(`書き出しに失敗しました: ${error instanceof Error ? error.message : error}`)
+      } finally {
+        setExporting(false)
+      }
+    },
+    [board.items, room],
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -72,6 +105,8 @@ export default function App() {
         onUndo={board.undo}
         onRedo={board.redo}
         onClear={board.clearBoard}
+        onExport={handleExport}
+        exporting={exporting}
         room={room}
         status={board.status}
         peers={board.peers}
@@ -91,6 +126,9 @@ export default function App() {
           onShapePreview={board.previewShape}
           onCursorMove={board.moveCursor}
           onCursorLeave={board.leaveCursor}
+          onSizeChange={(size) => {
+            boardSizeRef.current = size
+          }}
           onAddItem={board.addItem}
           onMoveText={board.moveItem}
           onCommitMove={board.commitMove}
