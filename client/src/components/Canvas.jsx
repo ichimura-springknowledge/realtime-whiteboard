@@ -12,12 +12,22 @@ const pointFromEvent = (event, rect) => [
   event.pressure > 0 ? event.pressure : 0.5,
 ]
 
-export default function Canvas({ color, size, strokes, onStrokeComplete }) {
+export default function Canvas({
+  color,
+  size,
+  strokes,
+  liveStrokes,
+  onStrokeStart,
+  onStrokePoints,
+  onStrokeComplete,
+}) {
   const canvasRef = useRef(null)
   const ctxRef = useRef(null)
   const currentRef = useRef(null)
+  const sentPointsRef = useRef(0)
   const frameRef = useRef(0)
   const strokesRef = useRef(strokes)
+  const liveStrokesRef = useRef(liveStrokes)
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current
@@ -29,16 +39,29 @@ export default function Canvas({ color, size, strokes, onStrokeComplete }) {
     ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
 
     for (const stroke of strokesRef.current) drawStroke(ctx, stroke)
+    for (const stroke of liveStrokesRef.current) drawStroke(ctx, stroke, { last: false })
     if (currentRef.current) drawStroke(ctx, currentRef.current, { last: false })
   }, [])
+
+  // Sends the points captured since the previous frame, so remote participants
+  // see the line grow instead of appearing only once it is finished.
+  const flushPoints = useCallback(() => {
+    const stroke = currentRef.current
+    if (!stroke) return
+    const pending = stroke.points.slice(sentPointsRef.current)
+    if (pending.length === 0) return
+    sentPointsRef.current = stroke.points.length
+    onStrokePoints?.(stroke.id, pending)
+  }, [onStrokePoints])
 
   const scheduleRedraw = useCallback(() => {
     if (frameRef.current) return
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = 0
       redraw()
+      flushPoints()
     })
-  }, [redraw])
+  }, [redraw, flushPoints])
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -63,21 +86,25 @@ export default function Canvas({ color, size, strokes, onStrokeComplete }) {
 
   useEffect(() => {
     strokesRef.current = strokes
+    liveStrokesRef.current = liveStrokes
     scheduleRedraw()
-  }, [strokes, scheduleRedraw])
+  }, [strokes, liveStrokes, scheduleRedraw])
 
   const handlePointerDown = (event) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const canvas = canvasRef.current
     canvas.setPointerCapture(event.pointerId)
 
-    currentRef.current = {
+    const stroke = {
       id: createId(),
       color,
       size,
       simulatePressure: event.pointerType !== 'pen',
       points: [pointFromEvent(event, canvas.getBoundingClientRect())],
     }
+    currentRef.current = stroke
+    sentPointsRef.current = stroke.points.length
+    onStrokeStart?.(stroke)
     scheduleRedraw()
   }
 
@@ -102,7 +129,9 @@ export default function Canvas({ color, size, strokes, onStrokeComplete }) {
     const canvas = canvasRef.current
     if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
 
+    flushPoints()
     currentRef.current = null
+    sentPointsRef.current = 0
     onStrokeComplete(stroke)
     scheduleRedraw()
   }

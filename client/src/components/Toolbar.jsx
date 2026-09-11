@@ -1,6 +1,36 @@
+import { useState } from 'react'
+
 const COLORS = ['#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
 
-export default function Toolbar({ color, onColorChange, size, onSizeChange, onClear }) {
+const STATUS_LABEL = {
+  connecting: '接続中…',
+  connected: '接続済み',
+  disconnected: '切断',
+  offline: 'サーバー未接続',
+}
+
+export default function Toolbar({
+  color,
+  onColorChange,
+  size,
+  onSizeChange,
+  onClear,
+  room,
+  status,
+  peers,
+}) {
+  const [copied, setCopied] = useState(false)
+
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      window.prompt('この URL を共有してください', window.location.href)
+    }
+  }
+
   return (
     <header className="toolbar">
       <span className="toolbar__title">Whiteboard</span>
@@ -41,6 +71,15 @@ export default function Toolbar({ color, onColorChange, size, onSizeChange, onCl
       <button type="button" className="button" onClick={onClear}>
         全消去
       </button>
+
+      <div className="toolbar__room">
+        <span className={`status status--${status}`}>{STATUS_LABEL[status] ?? status}</span>
+        <span className="toolbar__room-name">room: {room}</span>
+        <span className="toolbar__peers">{peers}人</span>
+        <button type="button" className="button" onClick={copyLink}>
+          {copied ? 'コピーしました' : '招待リンク'}
+        </button>
+      </div>
     </header>
   )
 }

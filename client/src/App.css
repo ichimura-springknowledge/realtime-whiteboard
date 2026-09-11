@@ -100,3 +100,50 @@
   cursor: crosshair;
   touch-action: none;
 }
+
+.toolbar__room {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.toolbar__room-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.toolbar__peers {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef1f6;
+  font-variant-numeric: tabular-nums;
+}
+
+.status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.status::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #9ca3af;
+}
+
+.status--connected::before {
+  background: #22c55e;
+}
+
+.status--connecting::before {
+  background: #eab308;
+}
+
+.status--disconnected::before,
+.status--offline::before {
+  background: #ef4444;
+}
