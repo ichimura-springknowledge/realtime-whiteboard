@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { drawItem, hitTestText, pointFromEvent } from '../lib/draw'
 import type {
   BoardItem,
   LiveItem,
-  PeerCursor,
   Point,
   Position,
   ShapeItem,
@@ -13,7 +12,6 @@ import type {
   TextDraft,
   Tool,
 } from '../types'
-import PeerCursors from './PeerCursors'
 import TextEditor from './TextEditor'
 
 const createId = (): string =>
@@ -40,7 +38,7 @@ interface CanvasProps {
   fontSize: number
   items: BoardItem[]
   liveItems: LiveItem[]
-  cursors: PeerCursor[]
+  movingIds: string[]
   onStrokeStart: (stroke: StrokeItem) => void
   onStrokePoints: (id: string, points: Point[]) => void
   onStrokeComplete: (stroke: StrokeItem) => void
@@ -53,14 +51,14 @@ interface CanvasProps {
   onCommitMove: (id: string, from: Position, to: Position) => void
 }
 
-export default function Canvas({
+function Canvas({
   tool,
   color,
   size,
   fontSize,
   items,
   liveItems,
-  cursors,
+  movingIds,
   onStrokeStart,
   onStrokePoints,
   onStrokeComplete,
@@ -83,6 +81,13 @@ export default function Canvas({
   const cursorFrameRef = useRef(0)
   const itemsRef = useRef(items)
   const liveItemsRef = useRef(liveItems)
+  const staticItemsRef = useRef<BoardItem[]>(items)
+  const movingItemsRef = useRef<BoardItem[]>([])
+  const staticRef = useRef<HTMLCanvasElement | null>(null)
+  // How many committed items the offscreen layer already holds, and where the
+  // next sync should start from (0 means "rebuild the whole thing").
+  const staticDrawnRef = useRef(0)
+  const staticFromRef = useRef(0)
   const [draft, setDraft] = useState<TextDraft | null>(null)
   const onSizeChangeRef = useRef(onSizeChange)
 
@@ -90,20 +95,62 @@ export default function Canvas({
     onSizeChangeRef.current = onSizeChange
   }, [onSizeChange])
 
+  /**
+   * Committed items live on an offscreen layer that is only redrawn when they
+   * change — and when they merely grew, only the new ones are added.
+   *
+   * Re-running perfect-freehand over every stroke on every frame is what makes
+   * a busy board stutter; this keeps the per-frame cost to whatever is still
+   * being drawn, however much is already on the board.
+   */
+  const syncStaticLayer = useCallback((canvas: HTMLCanvasElement, dpr: number) => {
+    let layer = staticRef.current
+    if (!layer) {
+      layer = document.createElement('canvas')
+      staticRef.current = layer
+    }
+    if (layer.width !== canvas.width || layer.height !== canvas.height) {
+      layer.width = canvas.width
+      layer.height = canvas.height
+      // Resizing a canvas clears it, so everything has to go back on.
+      staticFromRef.current = 0
+      staticDrawnRef.current = 0
+    }
+
+    const items = staticItemsRef.current
+    const from = staticFromRef.current
+    if (from === staticDrawnRef.current && staticDrawnRef.current === items.length) return layer
+
+    const ctx = layer.getContext('2d')
+    if (!ctx) return layer
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    if (from === 0) ctx.clearRect(0, 0, layer.width / dpr, layer.height / dpr)
+    for (let i = from; i < items.length; i++) drawItem(ctx, items[i]!)
+
+    staticDrawnRef.current = items.length
+    staticFromRef.current = items.length
+    return layer
+  }, [])
+
   const redraw = useCallback(() => {
     const canvas = canvasRef.current
     const ctx = ctxRef.current
     if (!canvas || !ctx) return
 
     const dpr = window.devicePixelRatio || 1
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
-    ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
+    const layer = syncStaticLayer(canvas, dpr)
 
-    for (const item of itemsRef.current) drawItem(ctx, item)
+    // Blitting happens in device pixels; everything else is drawn in CSS pixels.
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(layer, 0, 0)
+
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+    for (const moving of movingItemsRef.current) drawItem(ctx, moving)
     for (const live of liveItemsRef.current) drawItem(ctx, live, { last: false })
     if (currentRef.current) drawItem(ctx, currentRef.current, { last: false })
     if (shapeRef.current) drawItem(ctx, shapeRef.current)
-  }, [])
+  }, [syncStaticLayer])
 
   // Sends the points captured since the previous frame, so remote participants
   // see the line grow instead of appearing only once it is finished.
@@ -196,10 +243,33 @@ export default function Canvas({
   }, [redraw])
 
   useEffect(() => {
+    // Whatever is being dragged is drawn fresh each frame instead of going into
+    // the cached layer, so a drag never rebuilds the rest of the board.
+    const moving = movingIds.length > 0 ? new Set(movingIds) : null
+    const nextStatic = moving ? items.filter((item) => !moving.has(item.id)) : items
+
+    const previous = staticItemsRef.current
+    // The cached items are only ever appended to in the common case, and the
+    // objects themselves are reused, so a reference scan tells us whether the
+    // layer can be topped up instead of redrawn. Anything else (undo, a
+    // finished move, a clear) changes an existing entry and forces a rebuild.
+    let appendOnly = nextStatic.length >= previous.length
+    if (appendOnly) {
+      for (let i = 0; i < previous.length; i++) {
+        if (previous[i] !== nextStatic[i]) {
+          appendOnly = false
+          break
+        }
+      }
+    }
+    staticFromRef.current = appendOnly ? Math.min(previous.length, staticDrawnRef.current) : 0
+
+    staticItemsRef.current = nextStatic
+    movingItemsRef.current = moving ? items.filter((item) => moving.has(item.id)) : []
     itemsRef.current = items
     liveItemsRef.current = liveItems
     scheduleRedraw()
-  }, [items, liveItems, scheduleRedraw])
+  }, [items, liveItems, movingIds, scheduleRedraw])
 
   const commitDraft = (pending: TextDraft | null) => {
     const value = pending?.text.trim()
@@ -380,7 +450,7 @@ export default function Canvas({
   }
 
   return (
-    <div className="board-wrap">
+    <>
       <canvas
         ref={canvasRef}
         className={`board board--${tool}`}
@@ -390,7 +460,6 @@ export default function Canvas({
         onPointerCancel={handlePointerUp}
         onPointerLeave={onCursorLeave}
       />
-      <PeerCursors cursors={cursors} />
       {draft && (
         <TextEditor
           draft={draft}
@@ -399,6 +468,12 @@ export default function Canvas({
           onCancel={() => setDraft(null)}
         />
       )}
-    </div>
+    </>
   )
 }
+
+/**
+ * Memoised: participant cursors change many times a second, and the board has
+ * no reason to re-render because someone else moved their mouse.
+ */
+export default memo(Canvas)

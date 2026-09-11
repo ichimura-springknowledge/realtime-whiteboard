@@ -54,6 +54,8 @@ const moveIn = (items: BoardItem[], id: string, position: Position): BoardItem[]
 export interface Board {
   items: BoardItem[]
   liveItems: LiveItem[]
+  /** Items being dragged right now, by anyone. */
+  movingIds: string[]
   cursors: PeerCursor[]
   status: ConnectionStatus
   peers: number
@@ -87,6 +89,8 @@ export function useBoard(room: string): Board {
   const [items, setItems] = useState<BoardItem[]>([])
   const [liveItemMap, setLiveItemMap] = useState<Record<string, LiveItem>>({})
   const [cursorMap, setCursorMap] = useState<Record<string, PeerCursor>>({})
+  const [movingIds, setMovingIds] = useState<string[]>([])
+  const movingTimersRef = useRef(new Map<string, number>())
   const [history, setHistory] = useState<BoardAction[]>([])
   const [redoStack, setRedoStack] = useState<RedoAction[]>([])
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
@@ -103,6 +107,34 @@ export function useBoard(room: string): Board {
     historyRef.current = history
     redoStackRef.current = redoStack
   }, [items, history, redoStack])
+
+  /**
+   * Flags an item as "being dragged" until the moves stop. Renderers use this to
+   * keep it out of their cached layer, which would otherwise be rebuilt on every
+   * frame of the drag.
+   */
+  const markMoving = useCallback((id: string) => {
+    const timers = movingTimersRef.current
+    const pending = timers.get(id)
+    if (pending !== undefined) window.clearTimeout(pending)
+    else setMovingIds((prev) => (prev.includes(id) ? prev : [...prev, id]))
+
+    timers.set(
+      id,
+      window.setTimeout(() => {
+        timers.delete(id)
+        setMovingIds((prev) => prev.filter((candidate) => candidate !== id))
+      }, 250),
+    )
+  }, [])
+
+  useEffect(() => {
+    const timers = movingTimersRef.current
+    return () => {
+      for (const timer of timers.values()) window.clearTimeout(timer)
+      timers.clear()
+    }
+  }, [])
 
   const resetHistory = useCallback(() => {
     historyRef.current = []
@@ -153,6 +185,7 @@ export function useBoard(room: string): Board {
     })
     socket.on('item:move', ({ id, x, y }) => {
       setItems((prev) => moveIn(prev, id, { x, y }))
+      markMoving(id)
     })
     socket.on('board:clear', () => {
       setItems([])
@@ -175,7 +208,7 @@ export function useBoard(room: string): Board {
       socket.close()
       socketRef.current = null
     }
-  }, [room, resetHistory])
+  }, [room, resetHistory, markMoving])
 
   const pushAction = useCallback((action: BoardAction) => {
     historyRef.current = [...historyRef.current, action]
@@ -223,11 +256,15 @@ export function useBoard(room: string): Board {
     [pushAction],
   )
 
-  const applyMove = useCallback((id: string, position: Position) => {
-    itemsRef.current = moveIn(itemsRef.current, id, position)
-    setItems(itemsRef.current)
-    socketRef.current?.emit('item:move', { id, x: position.x, y: position.y })
-  }, [])
+  const applyMove = useCallback(
+    (id: string, position: Position) => {
+      itemsRef.current = moveIn(itemsRef.current, id, position)
+      setItems(itemsRef.current)
+      markMoving(id)
+      socketRef.current?.emit('item:move', { id, x: position.x, y: position.y })
+    },
+    [markMoving],
+  )
 
   /** Live position update while an item is being dragged; not a history entry. */
   const moveItem = useCallback(
@@ -312,6 +349,7 @@ export function useBoard(room: string): Board {
   return {
     items,
     liveItems,
+    movingIds,
     cursors,
     status,
     peers,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Canvas from './components/Canvas'
+import PeerCursors from './components/PeerCursors'
 import Toolbar from './components/Toolbar'
 import { useBoard } from './hooks/useBoard'
 import {
@@ -48,6 +49,10 @@ export default function App() {
   const boardSizeRef = useRef({ width: 0, height: 0 })
 
   const { undo, redo } = board
+
+  const handleBoardSize = useCallback((size: { width: number; height: number }) => {
+    boardSizeRef.current = size
+  }, [])
 
   const handleExport = useCallback(
     async (format: 'png' | 'svg') => {
@@ -112,27 +117,28 @@ export default function App() {
         peers={board.peers}
       />
       <main className="stage">
-        <Canvas
-          tool={tool}
-          color={color}
-          size={sizes[sizeKey]}
-          fontSize={sizes.text}
-          items={board.items}
-          liveItems={board.liveItems}
-          cursors={board.cursors}
-          onStrokeStart={board.startStroke}
-          onStrokePoints={board.appendPoints}
-          onStrokeComplete={board.completeStroke}
-          onShapePreview={board.previewShape}
-          onCursorMove={board.moveCursor}
-          onCursorLeave={board.leaveCursor}
-          onSizeChange={(size) => {
-            boardSizeRef.current = size
-          }}
-          onAddItem={board.addItem}
-          onMoveText={board.moveItem}
-          onCommitMove={board.commitMove}
-        />
+        <div className="board-wrap">
+          <Canvas
+            tool={tool}
+            color={color}
+            size={sizes[sizeKey]}
+            fontSize={sizes.text}
+            items={board.items}
+            liveItems={board.liveItems}
+            movingIds={board.movingIds}
+            onStrokeStart={board.startStroke}
+            onStrokePoints={board.appendPoints}
+            onStrokeComplete={board.completeStroke}
+            onShapePreview={board.previewShape}
+            onCursorMove={board.moveCursor}
+            onCursorLeave={board.leaveCursor}
+            onSizeChange={handleBoardSize}
+            onAddItem={board.addItem}
+            onMoveText={board.moveItem}
+            onCommitMove={board.commitMove}
+          />
+          <PeerCursors cursors={board.cursors} />
+        </div>
       </main>
     </div>
   )

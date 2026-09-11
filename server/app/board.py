@@ -10,25 +10,35 @@ MAX_ITEMS_PER_ROOM = 3000
 
 
 class Room:
+    """The ordered items of one board.
+
+    A board can hold thousands of items and every add, move and undo has to find
+    one by id, so the list is paired with an id index. Order still lives in the
+    list - the index only answers "which item is this?".
+    """
+
     def __init__(self, items: list[BoardItem] | None = None) -> None:
         self.items: list[BoardItem] = items or []
+        self._by_id: dict[str, BoardItem] = {item["id"]: item for item in self.items}
         # sid -> id of the stroke that participant is drawing right now
         self.live: dict[str, str] = {}
 
     def append(self, item: BoardItem) -> None:
         self.items.append(item)
+        self._by_id[item["id"]] = item
         # Oldest items drop out once a room gets very long, to bound memory.
         if len(self.items) > MAX_ITEMS_PER_ROOM:
-            del self.items[0]
+            oldest = self.items.pop(0)
+            self._by_id.pop(oldest["id"], None)
 
     def find(self, item_id: str) -> BoardItem | None:
-        return next((item for item in self.items if item["id"] == item_id), None)
+        return self._by_id.get(item_id)
 
     def remove(self, raw_id: Any) -> bool:
         item_id = sanitize_id(raw_id)
         if item_id is None:
             return False
-        item = self.find(item_id)
+        item = self._by_id.pop(item_id, None)
         if item is None:
             return False
         self.items.remove(item)
@@ -47,6 +57,7 @@ class Room:
 
     def clear(self) -> None:
         self.items = []
+        self._by_id.clear()
         self.live.clear()
 
 

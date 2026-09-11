@@ -105,3 +105,32 @@ def test_room_remove_and_clear():
     assert room.remove(None) is False
     room.clear()
     assert room.items == []
+
+
+def test_room_lookup_survives_the_item_cap():
+    """The id index must not outlive the items it points at."""
+    room = Room()
+    for index in range(3010):
+        room.append({**STROKE, "id": f"s{index}"})
+
+    assert room.find("s9") is None  # dropped when the cap was reached
+    assert room.find("s10") is not None
+    assert room.find("s3009") is not None
+    assert room.remove("s9") is False
+    assert len(room.items) == 3000
+
+
+def test_room_lookup_tracks_removal_and_clear():
+    room = Room([dict(STROKE), dict(TEXT)])
+    assert room.find("s1") is not None
+    room.remove("s1")
+    assert room.find("s1") is None
+    room.clear()
+    assert room.find("t1") is None
+    room.append(dict(TEXT))
+    assert room.find("t1") is not None
+
+
+def test_restored_rooms_are_searchable():
+    rooms = Rooms({"a": [dict(STROKE), dict(TEXT)]})
+    assert rooms.get("a").find("t1") is not None
