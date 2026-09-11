@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Iterator
 
-from .items import BoardItem, _is_finite, sanitize_id
+from .items import BoardItem, _is_finite, round_coord, sanitize_id
 
 MAX_ITEMS_PER_ROOM = 3000
 
@@ -51,8 +51,8 @@ class Room:
         item = self.find(item_id)
         if item is None or item["type"] != "text":
             return None
-        item["x"] = float(x)
-        item["y"] = float(y)
+        item["x"] = round_coord(x)
+        item["y"] = round_coord(y)
         return item
 
     def clear(self) -> None:

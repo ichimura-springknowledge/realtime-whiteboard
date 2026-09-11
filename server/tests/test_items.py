@@ -141,3 +141,32 @@ def test_shape_line_width_is_clamped():
     assert sanitize_item({**base, "size": 9999})["size"] == 100
     assert sanitize_item({**base, "size": 0})["size"] == 1
     assert sanitize_item({**base, "size": None})["size"] == 4
+
+
+def test_coordinates_are_rounded_before_storage():
+    """Raw pointer values serialise to 18 characters each; two decimals is plenty."""
+    stroke = sanitize_item({"id": "s", "points": [[21.48442375552714, 22.876553231625216, 0.5123]]})
+    assert stroke["points"] == [[21.48, 22.88, 0.51]]
+
+    text = sanitize_item(
+        {"id": "t", "type": "text", "x": 1.23456789, "y": 9.87654321, "text": "x"}
+    )
+    assert (text["x"], text["y"]) == (1.23, 9.88)
+
+    shape = sanitize_item(
+        {
+            "id": "r",
+            "type": "shape",
+            "shape": "rect",
+            "x1": 0.111111,
+            "y1": 0.555555,
+            "x2": 1.994999,
+            "y2": 2.0,
+        }
+    )
+    assert (shape["x1"], shape["y1"], shape["x2"], shape["y2"]) == (0.11, 0.56, 1.99, 2.0)
+
+
+def test_rounding_keeps_whole_numbers_exact():
+    stroke = sanitize_item({"id": "s", "points": [[100, 250, 1]]})
+    assert stroke["points"] == [[100.0, 250.0, 1.0]]

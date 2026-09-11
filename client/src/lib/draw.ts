@@ -145,14 +145,19 @@ export function hitTestText(
   return null
 }
 
+// A hundredth of a pixel is far below anything a screen shows, but the raw
+// values from a pointer device serialise to 18 characters each - paid for on
+// every point, on the wire and again on disk.
+const round2 = (value: number): number => Math.round(value * 100) / 100
+
 export function pointFromEvent(
   event: { clientX: number; clientY: number; pressure?: number },
   rect: DOMRect,
 ): Point {
   return [
-    event.clientX - rect.left,
-    event.clientY - rect.top,
-    event.pressure && event.pressure > 0 ? event.pressure : 0.5,
+    round2(event.clientX - rect.left),
+    round2(event.clientY - rect.top),
+    event.pressure && event.pressure > 0 ? round2(event.pressure) : 0.5,
   ]
 }
 

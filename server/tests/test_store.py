@@ -89,6 +89,12 @@ def test_room_keeps_items_bounded():
     assert room.items[0]["id"] == "s10"  # the oldest fell off
 
 
+def test_move_rounds_the_new_position():
+    room = Room([dict(TEXT)])
+    moved = room.move("t1", 12.3456789, 98.7654321)
+    assert (moved["x"], moved["y"]) == (12.35, 98.77)
+
+
 def test_room_move_only_applies_to_text():
     room = Room([dict(STROKE), dict(TEXT)])
     assert room.move("t1", 40, 50)["x"] == 40

@@ -16,6 +16,12 @@ MAX_COLOR_LENGTH = 32
 
 DEFAULT_COLOR = "#111827"
 
+# Coordinates are rounded before they are stored or forwarded. A hundredth of a
+# pixel is far below what any screen shows, and the raw values from a pointer
+# device serialise to 18 characters each - which is paid for on every point, on
+# the wire and again on disk.
+COORD_PRECISION = 2
+
 Point = list[float]
 
 
@@ -66,6 +72,10 @@ def _is_finite(value: Any) -> bool:
     )
 
 
+def round_coord(value: float) -> float:
+    return round(float(value), COORD_PRECISION)
+
+
 def clamp(value: Any, low: float, high: float, fallback: float) -> float:
     if not _is_finite(value):
         return fallback
@@ -93,7 +103,13 @@ def sanitize_points(raw: Any) -> list[Point] | None:
         if not _is_finite(x) or not _is_finite(y):
             continue
         pressure = point[2] if len(point) > 2 else None
-        points.append([float(x), float(y), float(pressure) if _is_finite(pressure) else 0.5])
+        points.append(
+            [
+                round_coord(x),
+                round_coord(y),
+                round_coord(pressure) if _is_finite(pressure) else 0.5,
+            ]
+        )
     return points
 
 
@@ -129,8 +145,8 @@ def sanitize_text(raw: dict[str, Any]) -> TextItem | None:
         type="text",
         color=sanitize_color(raw.get("color")),
         size=clamp(raw.get("size"), 8, 200, 24),
-        x=float(x),
-        y=float(y),
+        x=round_coord(x),
+        y=round_coord(y),
         text=text,
     )
 
@@ -144,7 +160,7 @@ def sanitize_shape(raw: dict[str, Any]) -> ShapeItem | None:
     if not all(_is_finite(value) for value in corners):
         return None
 
-    x1, y1, x2, y2 = (float(value) for value in corners)
+    x1, y1, x2, y2 = (round_coord(value) for value in corners)
     return ShapeItem(
         id=item_id,
         type="shape",
