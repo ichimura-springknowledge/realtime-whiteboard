@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .access import AccessGuard
 from .board import Rooms
-from .items import normalize_room_id, sanitize_item, sanitize_points
+from .items import _is_finite, normalize_room_id, sanitize_item, sanitize_points
 from .store import BoardStore
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
@@ -71,6 +71,20 @@ def _log_refusal(address: str | None, kind: str) -> None:
 
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins=ORIGIN)
+
+# Colours for participant cursors. Assigned by the server so two people never
+# pick the same one, and so a client cannot claim someone else's colour.
+CURSOR_COLORS = (
+    "#ef4444",
+    "#3b82f6",
+    "#22c55e",
+    "#f97316",
+    "#8b5cf6",
+    "#ec4899",
+    "#14b8a6",
+    "#eab308",
+)
+_next_cursor_color = 0
 
 
 def _peer_count(room_id: str) -> int:
@@ -130,11 +144,14 @@ async def connect(sid: str, environ: dict[str, Any]) -> bool:
         _log_refusal(address, "WebSocket")
         return False
 
+    global _next_cursor_color
     query = parse_qs(environ.get("QUERY_STRING", ""))
     room_id = normalize_room_id(query.get("room"))
     room = rooms.get(room_id)
 
-    await sio.save_session(sid, {"room": room_id})
+    color = CURSOR_COLORS[_next_cursor_color % len(CURSOR_COLORS)]
+    _next_cursor_color += 1
+    await sio.save_session(sid, {"room": room_id, "cursorColor": color})
     await sio.enter_room(sid, room_id)
 
     await sio.emit("board:init", {"room": room_id, "items": room.items}, to=sid)
@@ -146,6 +163,29 @@ async def _room_of(sid: str) -> tuple[str, Any]:
     session = await sio.get_session(sid)
     room_id = session["room"]
     return room_id, rooms.get(room_id)
+
+
+@sio.on("cursor:move")
+async def cursor_move(sid: str, payload: Any) -> None:
+    """Where this participant's pointer is. Not stored: it is gone when they are."""
+    if not isinstance(payload, dict):
+        return
+    x, y = payload.get("x"), payload.get("y")
+    if not _is_finite(x) or not _is_finite(y):
+        return
+    session = await sio.get_session(sid)
+    await sio.emit(
+        "cursor:move",
+        {"id": sid, "x": float(x), "y": float(y), "color": session["cursorColor"]},
+        room=session["room"],
+        skip_sid=sid,
+    )
+
+
+@sio.on("cursor:leave")
+async def cursor_leave(sid: str, *_args: Any) -> None:
+    session = await sio.get_session(sid)
+    await sio.emit("cursor:leave", {"id": sid}, room=session["room"], skip_sid=sid)
 
 
 @sio.on("stroke:start")
@@ -257,6 +297,7 @@ async def disconnect(sid: str, *_args: Any) -> None:
     live_id = room.live.pop(sid, None)
     if live_id:
         await sio.emit("stroke:cancel", {"id": live_id}, room=room_id, skip_sid=sid)
+    await sio.emit("cursor:leave", {"id": sid}, room=room_id, skip_sid=sid)
     await sio.emit("room:peers", _peer_count(room_id), room=room_id)
 
     # An empty board with nobody in it is worth forgetting; a drawn one is not.

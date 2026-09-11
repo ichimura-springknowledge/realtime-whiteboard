@@ -69,6 +69,14 @@ export type RedoAction =
   | { type: 'add'; id: string; item: BoardItem }
   | { type: 'move'; id: string; from: Position; to: Position }
 
+/** Another participant's pointer. Never stored: it goes when they do. */
+export interface PeerCursor {
+  id: string
+  x: number
+  y: number
+  color: string
+}
+
 export interface ServerToClientEvents {
   'board:init': (payload: { room: string; items: BoardItem[] }) => void
   'room:peers': (count: number) => void
@@ -80,6 +88,8 @@ export interface ServerToClientEvents {
   'item:move': (payload: { id: string; x: number; y: number }) => void
   'item:remove': (payload: { id: string }) => void
   'board:clear': () => void
+  'cursor:move': (cursor: PeerCursor) => void
+  'cursor:leave': (payload: { id: string }) => void
 }
 
 export interface ClientToServerEvents {
@@ -91,4 +101,6 @@ export interface ClientToServerEvents {
   'item:move': (payload: { id: string; x: number; y: number }) => void
   'item:remove': (payload: { id: string }) => void
   'board:clear': () => void
+  'cursor:move': (payload: { x: number; y: number }) => void
+  'cursor:leave': () => void
 }

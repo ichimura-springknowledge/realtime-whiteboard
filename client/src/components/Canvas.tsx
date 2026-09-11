@@ -4,6 +4,7 @@ import { drawItem, hitTestText, pointFromEvent } from '../lib/draw'
 import type {
   BoardItem,
   LiveItem,
+  PeerCursor,
   Point,
   Position,
   ShapeItem,
@@ -12,6 +13,7 @@ import type {
   TextDraft,
   Tool,
 } from '../types'
+import PeerCursors from './PeerCursors'
 import TextEditor from './TextEditor'
 
 const createId = (): string =>
@@ -38,10 +40,13 @@ interface CanvasProps {
   fontSize: number
   items: BoardItem[]
   liveItems: LiveItem[]
+  cursors: PeerCursor[]
   onStrokeStart: (stroke: StrokeItem) => void
   onStrokePoints: (id: string, points: Point[]) => void
   onStrokeComplete: (stroke: StrokeItem) => void
   onShapePreview: (shape: ShapeItem) => void
+  onCursorMove: (x: number, y: number) => void
+  onCursorLeave: () => void
   onAddItem: (item: BoardItem) => void
   onMoveText: (id: string, x: number, y: number) => void
   onCommitMove: (id: string, from: Position, to: Position) => void
@@ -54,10 +59,13 @@ export default function Canvas({
   fontSize,
   items,
   liveItems,
+  cursors,
   onStrokeStart,
   onStrokePoints,
   onStrokeComplete,
   onShapePreview,
+  onCursorMove,
+  onCursorLeave,
   onAddItem,
   onMoveText,
   onCommitMove,
@@ -68,7 +76,9 @@ export default function Canvas({
   const shapeRef = useRef<ShapeItem | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sentPointsRef = useRef(0)
+  const cursorRef = useRef<Position | null>(null)
   const frameRef = useRef(0)
+  const cursorFrameRef = useRef(0)
   const itemsRef = useRef(items)
   const liveItemsRef = useRef(liveItems)
   const [draft, setDraft] = useState<TextDraft | null>(null)
@@ -110,6 +120,15 @@ export default function Canvas({
     onMoveText(drag.id, x, y)
   }, [onMoveText])
 
+  // Pointer moves arrive far faster than frames; one position per frame is
+  // plenty for a cursor and keeps the traffic bounded.
+  const flushCursor = useCallback(() => {
+    const cursor = cursorRef.current
+    if (!cursor) return
+    cursorRef.current = null
+    onCursorMove(cursor.x, cursor.y)
+  }, [onCursorMove])
+
   // The whole shape is small, so the current corners go out once per frame.
   const flushShape = useCallback(() => {
     if (shapeRef.current) onShapePreview(shapeRef.current)
@@ -125,6 +144,16 @@ export default function Canvas({
       flushShape()
     })
   }, [redraw, flushPoints, flushDrag, flushShape])
+
+  // Kept apart from the redraw frame: moving the pointer without drawing should
+  // publish a cursor position, not repaint every item on the board.
+  const scheduleCursor = useCallback(() => {
+    if (cursorFrameRef.current) return
+    cursorFrameRef.current = requestAnimationFrame(() => {
+      cursorFrameRef.current = 0
+      flushCursor()
+    })
+  }, [flushCursor])
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -144,11 +173,15 @@ export default function Canvas({
     observer.observe(canvas)
     return () => {
       observer.disconnect()
+      // These must be cleared, not just cancelled: a stale id makes the
+      // schedulers think a frame is already pending and skip every later one.
       if (frameRef.current) {
         cancelAnimationFrame(frameRef.current)
-        // Must be cleared: a stale id here makes scheduleRedraw think a frame is
-        // already pending and silently skip every later redraw.
         frameRef.current = 0
+      }
+      if (cursorFrameRef.current) {
+        cancelAnimationFrame(cursorFrameRef.current)
+        cursorFrameRef.current = 0
       }
     }
   }, [redraw])
@@ -253,6 +286,9 @@ export default function Canvas({
     if (!canvas || !ctx) return
 
     const rect = canvas.getBoundingClientRect()
+    cursorRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    scheduleCursor()
+
     const drag = dragRef.current
 
     if (drag) {
@@ -343,7 +379,9 @@ export default function Canvas({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        onPointerLeave={onCursorLeave}
       />
+      <PeerCursors cursors={cursors} />
       {draft && (
         <TextEditor
           draft={draft}

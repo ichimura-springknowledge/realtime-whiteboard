@@ -84,10 +84,13 @@ export default function App() {
           fontSize={sizes.text}
           items={board.items}
           liveItems={board.liveItems}
+          cursors={board.cursors}
           onStrokeStart={board.startStroke}
           onStrokePoints={board.appendPoints}
           onStrokeComplete={board.completeStroke}
           onShapePreview={board.previewShape}
+          onCursorMove={board.moveCursor}
+          onCursorLeave={board.leaveCursor}
           onAddItem={board.addItem}
           onMoveText={board.moveItem}
           onCommitMove={board.commitMove}
