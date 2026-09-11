@@ -11,22 +11,23 @@
 ## 社内で使う（本番構成）
 
 社内に 1 台、常時起動しておく PC でサーバーを動かします。クライアントも
-サーバーが配信するので、**ポートは 3001 の 1 つだけ**です。
+サーバーが配信するので、**使うポートは 1 つだけ**です。
 
 ```bash
 # 1) 一度だけ: 依存関係の取得とクライアントのビルド
 cd server && npm install && cd ..
 cd client && npm install && npm run build && cd ..
 
-# 2) サーバーを起動（社内 Wi-Fi のサブネットだけを許可する）
+# 2) サーバーを起動（ポートと、許可するサブネットを指定）
 cd server
-ALLOWED_CIDRS=192.168.1.0/24 npm start
+PORT=5000 ALLOWED_CIDRS=192.168.1.0/24 npm start
 ```
 
 Windows の PowerShell では:
 
 ```powershell
 cd server
+$env:PORT = "5000"
 $env:ALLOWED_CIDRS = "192.168.1.0/24"
 npm start
 ```
@@ -34,8 +35,20 @@ npm start
 あとは各自のブラウザで、サーバー機の IP を開くだけです。
 
 ```
-http://192.168.1.201:3001/?room=team-a
+http://192.168.1.201:5000/?room=team-a
 ```
+
+> **ポート番号は、ファイアウォールで受信が許可されているものを選びます。**
+> Windows は既定で外部からの接続を遮断するため、許可されていないポートを使うと
+> 同僚からは一切つながりません。許可済みのポートは以下で確認できます（管理者権限は不要）。
+>
+> ```powershell
+> Get-NetFirewallRule -Direction Inbound -Enabled True -Action Allow |
+>   Where-Object { ($_ | Get-NetFirewallApplicationFilter).Program -eq 'Any' } |
+>   ForEach-Object { "{0} : {1}" -f $_.DisplayName, ($_ | Get-NetFirewallPortFilter).LocalPort }
+> ```
+>
+> 空なら、管理者権限のある人に受信許可を追加してもらう必要があります（後述）。
 
 `?room=` を省略するとルーム ID が自動生成され、URL に書き戻されます。その URL を
 共有すれば同じボードに入れます（ツールバーの「招待リンク」でコピーできます）。
@@ -74,11 +87,16 @@ ALLOWED_CIDRS=192.168.1.50/32                 # 1 台だけ
 
 Windows は既定で外部からの接続を遮断します。とくに Wi-Fi が「パブリック
 ネットワーク」に分類されていると、ポートを開けない限り同僚からは一切つながりません。
-**管理者として実行した PowerShell** で一度だけ設定します。
+
+まず、**既に許可されているポートが無いか**を確認してください（上記のコマンド）。
+あればそのポートを `PORT` に指定するだけで済みます。
+
+無い場合は、**管理者として実行した PowerShell** で一度だけ設定します
+（管理者権限が無いアカウントでは実行できないため、情報システム担当に依頼してください）。
 
 ```powershell
 New-NetFirewallRule -DisplayName "Realtime Whiteboard" -Direction Inbound `
-  -Protocol TCP -LocalPort 3001 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+  -Protocol TCP -LocalPort 5000 -Action Allow -Profile Any -RemoteAddress LocalSubnet
 ```
 
 `-RemoteAddress LocalSubnet` で同じサブネットからの接続だけに限定しています。
@@ -86,7 +104,7 @@ New-NetFirewallRule -DisplayName "Realtime Whiteboard" -Direction Inbound `
 `Get-NetFirewallRule -DisplayName "Realtime Whiteboard"` で確認できます。
 元に戻すときは `Remove-NetFirewallRule -DisplayName "Realtime Whiteboard"` です。
 
-**2. 切り分け** — 同僚のブラウザで `http://<サーバー機の IP>:3001/health` を開きます。
+**2. 切り分け** — 同僚のブラウザで `http://<サーバー機の IP>:<ポート>/health` を開きます。
 
 | 症状 | 原因 |
 |---|---|
@@ -125,12 +143,15 @@ cd server && npm run dev     # http://localhost:3001（ファイル変更で自�
 cd client && npm run dev     # http://localhost:5173（LAN にも公開されます）
 ```
 
-クライアントは、**ページを開いたホスト名の :3001** に自動で接続します。
-`http://192.168.1.201:5173/` を他の PC から開けばそのままつながります。
-接続先を固定したい場合だけ `client/.env` に `VITE_SERVER_URL` を設定してください
-（`client/.env.example` を参照）。
+開発時のクライアントは、**ページを開いたホスト名の :3001** に自動で接続します
+（`VITE_SERVER_PORT` で変更可）。`http://192.168.1.201:5173/` を他の PC から開いても
+そのままつながります。接続先を完全に固定したい場合だけ `client/.env` に
+`VITE_SERVER_URL` を設定してください（`client/.env.example` を参照）。
 
-サーバーの状態は `http://localhost:3001/health` で確認できます（許可範囲、保存先、
+ビルド版はサーバー自身が配信するため、**ポート番号によらず同じオリジン**に接続します。
+`PORT` を変えてもクライアントの再ビルドは不要です。
+
+サーバーの状態は `http://localhost:<ポート>/health` で確認できます（許可範囲、保存先、
 ルームごとの要素数と接続人数）。
 
 ## 使える機能
@@ -184,7 +205,7 @@ cd client && npm run dev     # http://localhost:5173（LAN にも公開されま
 
 | 変数 | 既定値 | 内容 |
 |---|---|---|
-| `PORT` | `3001` | 待ち受けポート |
+| `PORT` | `3001` | 待ち受けポート（ファイアウォールで許可されたものを選ぶ） |
 | `HOST` | `0.0.0.0` | 待ち受けアドレス |
 | `ALLOWED_CIDRS` | プライベートアドレス全体 | 接続を許可する範囲（カンマ区切り、IPv4） |
 | `DATA_FILE` | `server/data/boards.json` | 保存先 |

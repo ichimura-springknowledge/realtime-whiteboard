@@ -1,19 +1,22 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { io } from 'socket.io-client'
 
-const DEFAULT_SERVER_PORT = '3001'
+// Only used by `npm run dev`, where the client is served by Vite and the
+// whiteboard server is a separate process.
+const DEV_SERVER_PORT = import.meta.env.VITE_SERVER_PORT || '3001'
 
 /**
- * Where the whiteboard server lives. Derived from the address the page was
- * opened on, so visiting http://192.168.1.5:5173/ from another desk on the
- * office Wi-Fi talks to that machine rather than to the visitor's own.
+ * Where the whiteboard server lives.
+ *
+ * A production build is served by the whiteboard server itself, so it talks to
+ * the same origin whatever port that happens to be - which matters, because the
+ * port is chosen to suit the office firewall rather than being fixed.
  */
 function resolveServerUrl() {
   if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL
-  const { protocol, hostname, port } = window.location
-  // Served by the whiteboard server itself: stay on the same origin.
-  if (port === DEFAULT_SERVER_PORT) return undefined
-  return `${protocol}//${hostname}:${DEFAULT_SERVER_PORT}`
+  if (!import.meta.env.DEV) return undefined
+  const { protocol, hostname } = window.location
+  return `${protocol}//${hostname}:${DEV_SERVER_PORT}`
 }
 
 const SERVER_URL = resolveServerUrl()
