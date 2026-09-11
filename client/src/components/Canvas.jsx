@@ -80,7 +80,12 @@ export default function Canvas({
     observer.observe(canvas)
     return () => {
       observer.disconnect()
-      if (frameRef.current) cancelAnimationFrame(frameRef.current)
+      if (frameRef.current) {
+        cancelAnimationFrame(frameRef.current)
+        // Must be cleared: a stale id here makes scheduleRedraw think a frame is
+        // already pending and silently skip every later redraw.
+        frameRef.current = 0
+      }
     }
   }, [redraw])
 
