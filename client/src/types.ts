@@ -23,9 +23,27 @@ export interface TextItem {
   text: string
 }
 
-export type BoardItem = StrokeItem | TextItem
+export type ShapeKind = 'rect' | 'ellipse' | 'arrow'
 
-export type Tool = 'pen' | 'eraser' | 'text'
+/** Drawn by dragging from one corner (or tail) to the other. */
+export interface ShapeItem {
+  id: string
+  type: 'shape'
+  shape: ShapeKind
+  color: string
+  size: number
+  x1: number
+  y1: number
+  x2: number
+  y2: number
+}
+
+export type BoardItem = StrokeItem | TextItem | ShapeItem
+
+/** Items that are shown while someone is still drawing them. */
+export type LiveItem = StrokeItem | ShapeItem
+
+export type Tool = 'pen' | 'eraser' | 'text' | ShapeKind
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'offline'
 
@@ -57,6 +75,7 @@ export interface ServerToClientEvents {
   'stroke:start': (stroke: StrokeItem) => void
   'stroke:points': (payload: { id: string; points: Point[] }) => void
   'stroke:cancel': (payload: { id: string }) => void
+  'shape:preview': (shape: ShapeItem) => void
   'item:add': (item: BoardItem) => void
   'item:move': (payload: { id: string; x: number; y: number }) => void
   'item:remove': (payload: { id: string }) => void
@@ -67,6 +86,7 @@ export interface ClientToServerEvents {
   'stroke:start': (stroke: StrokeItem) => void
   'stroke:points': (payload: { id: string; points: Point[] }) => void
   'stroke:end': (stroke: StrokeItem) => void
+  'shape:preview': (shape: ShapeItem) => void
   'item:add': (item: BoardItem) => void
   'item:move': (payload: { id: string; x: number; y: number }) => void
   'item:remove': (payload: { id: string }) => void

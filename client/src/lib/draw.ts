@@ -1,5 +1,5 @@
 import { getStroke } from 'perfect-freehand'
-import type { BoardItem, Point, StrokeItem, TextItem } from '../types'
+import type { BoardItem, Point, ShapeItem, StrokeItem, TextItem } from '../types'
 
 export const TEXT_FONT = "system-ui, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif"
 export const TEXT_LINE_HEIGHT = 1.3
@@ -94,6 +94,7 @@ export function drawItem(
   options?: DrawOptions,
 ): void {
   if (item.type === 'text') drawText(ctx, item)
+  else if (item.type === 'shape') drawShape(ctx, item)
   else drawStroke(ctx, item, options)
 }
 
@@ -152,5 +153,54 @@ export function pointFromEvent(
     event.clientX - rect.left,
     event.clientY - rect.top,
     event.pressure && event.pressure > 0 ? event.pressure : 0.5,
+  ]
+}
+
+const ARROW_HEAD_RATIO = 3.5
+const ARROW_HEAD_MIN = 10
+
+function strokeShapeStyle(ctx: CanvasRenderingContext2D, shape: ShapeItem): void {
+  ctx.strokeStyle = shape.color
+  ctx.lineWidth = shape.size
+  ctx.lineCap = 'round'
+  ctx.lineJoin = 'round'
+}
+
+export function drawShape(ctx: CanvasRenderingContext2D, shape: ShapeItem): void {
+  const { x1, y1, x2, y2 } = shape
+  ctx.save()
+  strokeShapeStyle(ctx, shape)
+
+  if (shape.shape === 'rect') {
+    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1)
+  } else if (shape.shape === 'ellipse') {
+    const rx = Math.abs(x2 - x1) / 2
+    const ry = Math.abs(y2 - y1) / 2
+    ctx.beginPath()
+    ctx.ellipse((x1 + x2) / 2, (y1 + y2) / 2, rx, ry, 0, 0, Math.PI * 2)
+    ctx.stroke()
+  } else {
+    for (const segment of arrowSegments(shape)) {
+      ctx.beginPath()
+      ctx.moveTo(segment[0], segment[1])
+      ctx.lineTo(segment[2], segment[3])
+      ctx.stroke()
+    }
+  }
+  ctx.restore()
+}
+
+/** Shaft plus the two head barbs, as `[x1, y1, x2, y2]` lines. */
+export function arrowSegments(shape: ShapeItem): [number, number, number, number][] {
+  const { x1, y1, x2, y2 } = shape
+  const angle = Math.atan2(y2 - y1, x2 - x1)
+  const length = Math.hypot(x2 - x1, y2 - y1)
+  const head = Math.min(Math.max(shape.size * ARROW_HEAD_RATIO, ARROW_HEAD_MIN), length)
+  const spread = Math.PI / 7
+
+  return [
+    [x1, y1, x2, y2],
+    [x2, y2, x2 - head * Math.cos(angle - spread), y2 - head * Math.sin(angle - spread)],
+    [x2, y2, x2 - head * Math.cos(angle + spread), y2 - head * Math.sin(angle + spread)],
   ]
 }

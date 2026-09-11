@@ -8,6 +8,9 @@ const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: 'pen', label: 'ペン', hint: 'ドラッグで描画' },
   { id: 'eraser', label: '消しゴム', hint: 'なぞった部分を消す' },
   { id: 'text', label: '文字', hint: 'クリックで入力 / 既存の文字はドラッグで移動' },
+  { id: 'rect', label: '□', hint: '四角: ドラッグで対角を決める' },
+  { id: 'ellipse', label: '○', hint: '丸: ドラッグで外接する四角を決める' },
+  { id: 'arrow', label: '↗', hint: '矢印: 始点から終点へドラッグ' },
 ]
 
 const STATUS_LABEL: Record<ConnectionStatus, string> = {

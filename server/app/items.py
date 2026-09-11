@@ -39,7 +39,22 @@ class TextItem(TypedDict):
     text: str
 
 
-BoardItem = StrokeItem | TextItem
+SHAPE_KINDS = frozenset({"rect", "ellipse", "arrow"})
+
+
+class ShapeItem(TypedDict):
+    id: str
+    type: Literal["shape"]
+    shape: str
+    color: str
+    size: float
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+
+
+BoardItem = StrokeItem | TextItem | ShapeItem
 
 
 def _is_finite(value: Any) -> bool:
@@ -120,11 +135,37 @@ def sanitize_text(raw: dict[str, Any]) -> TextItem | None:
     )
 
 
+def sanitize_shape(raw: dict[str, Any]) -> ShapeItem | None:
+    item_id = sanitize_id(raw.get("id"))
+    kind = raw.get("shape")
+    if item_id is None or kind not in SHAPE_KINDS:
+        return None
+    corners = [raw.get("x1"), raw.get("y1"), raw.get("x2"), raw.get("y2")]
+    if not all(_is_finite(value) for value in corners):
+        return None
+
+    x1, y1, x2, y2 = (float(value) for value in corners)
+    return ShapeItem(
+        id=item_id,
+        type="shape",
+        shape=kind,
+        color=sanitize_color(raw.get("color")),
+        size=clamp(raw.get("size"), 1, 100, 4),
+        x1=x1,
+        y1=y1,
+        x2=x2,
+        y2=y2,
+    )
+
+
 def sanitize_item(raw: Any) -> BoardItem | None:
     if not isinstance(raw, dict):
         return None
-    if raw.get("type") == "text":
+    kind = raw.get("type")
+    if kind == "text":
         return sanitize_text(raw)
+    if kind == "shape":
+        return sanitize_shape(raw)
     return sanitize_stroke(raw)
 
 

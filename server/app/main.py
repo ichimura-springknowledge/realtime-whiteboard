@@ -174,6 +174,17 @@ async def stroke_points(sid: str, payload: Any) -> None:
     )
 
 
+@sio.on("shape:preview")
+async def shape_preview(sid: str, raw: Any) -> None:
+    """A shape being dragged out; resent whole on every frame until released."""
+    room_id, room = await _room_of(sid)
+    shape = sanitize_item(raw)
+    if shape is None or shape["type"] != "shape":
+        return
+    room.live[sid] = shape["id"]
+    await sio.emit("shape:preview", shape, room=room_id, skip_sid=sid)
+
+
 @sio.on("stroke:end")
 async def stroke_end(sid: str, raw: Any) -> None:
     room_id, room = await _room_of(sid)
@@ -193,6 +204,7 @@ async def item_add(sid: str, raw: Any) -> None:
     item = sanitize_item(raw)
     if item is None or room.find(item["id"]) is not None:
         return
+    room.live.pop(sid, None)
     room.append(item)
     await sio.emit("item:add", item, room=room_id, skip_sid=sid)
     _persist()

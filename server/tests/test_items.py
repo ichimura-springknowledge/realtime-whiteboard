@@ -91,3 +91,53 @@ def test_room_ids_keep_only_safe_characters():
     assert normalize_room_id(None) == "lobby"
     assert normalize_room_id("会議室") == "lobby"
     assert len(normalize_room_id("x" * 200)) == 64
+
+
+def test_shape_is_rebuilt_from_known_fields():
+    item = sanitize_item(
+        {"id": "r1", "type": "shape", "shape": "rect", "x1": 1, "y1": 2, "x2": 3, "y2": 4}
+    )
+    assert item == {
+        "id": "r1",
+        "type": "shape",
+        "shape": "rect",
+        "color": "#111827",
+        "size": 4.0,
+        "x1": 1.0,
+        "y1": 2.0,
+        "x2": 3.0,
+        "y2": 4.0,
+    }
+
+
+def test_every_shape_kind_is_accepted():
+    for kind in ("rect", "ellipse", "arrow"):
+        item = sanitize_item(
+            {"id": "s", "type": "shape", "shape": kind, "x1": 0, "y1": 0, "x2": 1, "y2": 1}
+        )
+        assert item["shape"] == kind
+
+
+def test_unknown_shape_kinds_are_rejected():
+    assert (
+        sanitize_item(
+            {"id": "s", "type": "shape", "shape": "triangle", "x1": 0, "y1": 0, "x2": 1, "y2": 1}
+        )
+        is None
+    )
+
+
+def test_shapes_need_all_four_finite_corners():
+    base = {"id": "s", "type": "shape", "shape": "rect", "x1": 0, "y1": 0, "x2": 1, "y2": 1}
+    assert sanitize_item(base) is not None
+    for missing in ("x1", "y1", "x2", "y2"):
+        assert sanitize_item({**base, missing: None}) is None
+    assert sanitize_item({**base, "x2": math.inf}) is None
+    assert sanitize_item({**base, "y2": "10"}) is None
+
+
+def test_shape_line_width_is_clamped():
+    base = {"id": "s", "type": "shape", "shape": "rect", "x1": 0, "y1": 0, "x2": 1, "y2": 1}
+    assert sanitize_item({**base, "size": 9999})["size"] == 100
+    assert sanitize_item({**base, "size": 0})["size"] == 1
+    assert sanitize_item({**base, "size": None})["size"] == 4

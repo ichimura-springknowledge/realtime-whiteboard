@@ -1,13 +1,26 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
-import { drawItem, drawStroke, hitTestText, pointFromEvent } from '../lib/draw'
-import type { BoardItem, Point, Position, StrokeItem, TextDraft, Tool } from '../types'
+import { drawItem, hitTestText, pointFromEvent } from '../lib/draw'
+import type {
+  BoardItem,
+  LiveItem,
+  Point,
+  Position,
+  ShapeItem,
+  ShapeKind,
+  StrokeItem,
+  TextDraft,
+  Tool,
+} from '../types'
 import TextEditor from './TextEditor'
 
 const createId = (): string =>
   typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+const isShapeTool = (tool: Tool): tool is ShapeKind =>
+  tool === 'rect' || tool === 'ellipse' || tool === 'arrow'
 
 interface DragState {
   id: string
@@ -24,11 +37,12 @@ interface CanvasProps {
   size: number
   fontSize: number
   items: BoardItem[]
-  liveStrokes: StrokeItem[]
+  liveItems: LiveItem[]
   onStrokeStart: (stroke: StrokeItem) => void
   onStrokePoints: (id: string, points: Point[]) => void
   onStrokeComplete: (stroke: StrokeItem) => void
-  onAddText: (item: BoardItem) => void
+  onShapePreview: (shape: ShapeItem) => void
+  onAddItem: (item: BoardItem) => void
   onMoveText: (id: string, x: number, y: number) => void
   onCommitMove: (id: string, from: Position, to: Position) => void
 }
@@ -39,22 +53,24 @@ export default function Canvas({
   size,
   fontSize,
   items,
-  liveStrokes,
+  liveItems,
   onStrokeStart,
   onStrokePoints,
   onStrokeComplete,
-  onAddText,
+  onShapePreview,
+  onAddItem,
   onMoveText,
   onCommitMove,
 }: CanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
   const currentRef = useRef<StrokeItem | null>(null)
+  const shapeRef = useRef<ShapeItem | null>(null)
   const dragRef = useRef<DragState | null>(null)
   const sentPointsRef = useRef(0)
   const frameRef = useRef(0)
   const itemsRef = useRef(items)
-  const liveStrokesRef = useRef(liveStrokes)
+  const liveItemsRef = useRef(liveItems)
   const [draft, setDraft] = useState<TextDraft | null>(null)
 
   const redraw = useCallback(() => {
@@ -67,8 +83,9 @@ export default function Canvas({
     ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr)
 
     for (const item of itemsRef.current) drawItem(ctx, item)
-    for (const stroke of liveStrokesRef.current) drawStroke(ctx, stroke, { last: false })
-    if (currentRef.current) drawStroke(ctx, currentRef.current, { last: false })
+    for (const live of liveItemsRef.current) drawItem(ctx, live, { last: false })
+    if (currentRef.current) drawItem(ctx, currentRef.current, { last: false })
+    if (shapeRef.current) drawItem(ctx, shapeRef.current)
   }, [])
 
   // Sends the points captured since the previous frame, so remote participants
@@ -93,6 +110,11 @@ export default function Canvas({
     onMoveText(drag.id, x, y)
   }, [onMoveText])
 
+  // The whole shape is small, so the current corners go out once per frame.
+  const flushShape = useCallback(() => {
+    if (shapeRef.current) onShapePreview(shapeRef.current)
+  }, [onShapePreview])
+
   const scheduleRedraw = useCallback(() => {
     if (frameRef.current) return
     frameRef.current = requestAnimationFrame(() => {
@@ -100,8 +122,9 @@ export default function Canvas({
       redraw()
       flushPoints()
       flushDrag()
+      flushShape()
     })
-  }, [redraw, flushPoints, flushDrag])
+  }, [redraw, flushPoints, flushDrag, flushShape])
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current
@@ -132,14 +155,14 @@ export default function Canvas({
 
   useEffect(() => {
     itemsRef.current = items
-    liveStrokesRef.current = liveStrokes
+    liveItemsRef.current = liveItems
     scheduleRedraw()
-  }, [items, liveStrokes, scheduleRedraw])
+  }, [items, liveItems, scheduleRedraw])
 
   const commitDraft = (pending: TextDraft | null) => {
     const value = pending?.text.trim()
     if (!pending || !value) return
-    onAddText({
+    onAddItem({
       id: createId(),
       type: 'text',
       x: pending.x,
@@ -191,6 +214,23 @@ export default function Canvas({
       return
     }
 
+    if (isShapeTool(tool)) {
+      canvas.setPointerCapture(event.pointerId)
+      shapeRef.current = {
+        id: createId(),
+        type: 'shape',
+        shape: tool,
+        color,
+        size,
+        x1: x,
+        y1: y,
+        x2: x,
+        y2: y,
+      }
+      scheduleRedraw()
+      return
+    }
+
     canvas.setPointerCapture(event.pointerId)
     const stroke: StrokeItem = {
       id: createId(),
@@ -220,6 +260,14 @@ export default function Canvas({
         x: event.clientX - rect.left - drag.grabX,
         y: event.clientY - rect.top - drag.grabY,
       }
+      scheduleRedraw()
+      return
+    }
+
+    const shape = shapeRef.current
+    if (shape) {
+      shape.x2 = event.clientX - rect.left
+      shape.y2 = event.clientY - rect.top
       scheduleRedraw()
       return
     }
@@ -262,6 +310,16 @@ export default function Canvas({
       dragRef.current = null
       release()
       onCommitMove(drag.id, drag.from, drag.last)
+      return
+    }
+
+    const shape = shapeRef.current
+    if (shape) {
+      shapeRef.current = null
+      release()
+      // A click with no drag leaves nothing to draw.
+      if (shape.x1 !== shape.x2 || shape.y1 !== shape.y2) onAddItem(shape)
+      scheduleRedraw()
       return
     }
 

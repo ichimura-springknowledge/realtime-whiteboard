@@ -5,9 +5,11 @@ import type {
   BoardItem,
   ClientToServerEvents,
   ConnectionStatus,
+  LiveItem,
   Position,
   RedoAction,
   ServerToClientEvents,
+  ShapeItem,
   StrokeItem,
 } from '../types'
 
@@ -33,12 +35,12 @@ function resolveServerUrl(): string | undefined {
 
 const SERVER_URL = resolveServerUrl()
 
-const withoutStroke = (
-  strokes: Record<string, StrokeItem>,
+const withoutItem = (
+  items: Record<string, LiveItem>,
   id: string,
-): Record<string, StrokeItem> => {
-  if (!(id in strokes)) return strokes
-  const next = { ...strokes }
+): Record<string, LiveItem> => {
+  if (!(id in items)) return items
+  const next = { ...items }
   delete next[id]
   return next
 }
@@ -50,7 +52,7 @@ const moveIn = (items: BoardItem[], id: string, position: Position): BoardItem[]
 
 export interface Board {
   items: BoardItem[]
-  liveStrokes: StrokeItem[]
+  liveItems: LiveItem[]
   status: ConnectionStatus
   peers: number
   canUndo: boolean
@@ -58,6 +60,7 @@ export interface Board {
   startStroke: (stroke: StrokeItem) => void
   appendPoints: (id: string, points: StrokeItem['points']) => void
   completeStroke: (stroke: StrokeItem) => void
+  previewShape: (shape: ShapeItem) => void
   addItem: (item: BoardItem) => void
   moveItem: (id: string, x: number, y: number) => void
   commitMove: (id: string, from: Position, to: Position) => void
@@ -78,7 +81,7 @@ export interface Board {
 export function useBoard(room: string): Board {
   const socketRef = useRef<BoardSocket | null>(null)
   const [items, setItems] = useState<BoardItem[]>([])
-  const [liveStrokeMap, setLiveStrokeMap] = useState<Record<string, StrokeItem>>({})
+  const [liveItemMap, setLiveItemMap] = useState<Record<string, LiveItem>>({})
   const [history, setHistory] = useState<BoardAction[]>([])
   const [redoStack, setRedoStack] = useState<RedoAction[]>([])
   const [status, setStatus] = useState<ConnectionStatus>('connecting')
@@ -113,27 +116,30 @@ export function useBoard(room: string): Board {
 
     socket.on('board:init', (payload) => {
       setItems(payload?.items ?? [])
-      setLiveStrokeMap({})
+      setLiveItemMap({})
       resetHistory()
     })
     socket.on('room:peers', (count) => setPeers(count || 1))
 
     socket.on('stroke:start', (stroke) => {
-      setLiveStrokeMap((prev) => ({ ...prev, [stroke.id]: stroke }))
+      setLiveItemMap((prev) => ({ ...prev, [stroke.id]: stroke }))
     })
     socket.on('stroke:points', ({ id, points }) => {
-      setLiveStrokeMap((prev) => {
+      setLiveItemMap((prev) => {
         const stroke = prev[id]
-        if (!stroke) return prev
+        if (!stroke || stroke.type !== 'stroke') return prev
         return { ...prev, [id]: { ...stroke, points: [...stroke.points, ...points] } }
       })
     })
     socket.on('stroke:cancel', ({ id }) => {
-      setLiveStrokeMap((prev) => withoutStroke(prev, id))
+      setLiveItemMap((prev) => withoutItem(prev, id))
+    })
+    socket.on('shape:preview', (shape) => {
+      setLiveItemMap((prev) => ({ ...prev, [shape.id]: shape }))
     })
 
     socket.on('item:add', (item) => {
-      setLiveStrokeMap((prev) => withoutStroke(prev, item.id))
+      setLiveItemMap((prev) => withoutItem(prev, item.id))
       setItems((prev) => (prev.some((it) => it.id === item.id) ? prev : [...prev, item]))
     })
     socket.on('item:remove', ({ id }) => {
@@ -144,7 +150,7 @@ export function useBoard(room: string): Board {
     })
     socket.on('board:clear', () => {
       setItems([])
-      setLiveStrokeMap({})
+      setLiveItemMap({})
       resetHistory()
     })
 
@@ -172,6 +178,11 @@ export function useBoard(room: string): Board {
 
   const startStroke = useCallback((stroke: StrokeItem) => {
     socketRef.current?.emit('stroke:start', stroke)
+  }, [])
+
+  /** A shape is small enough to resend whole on every frame of the drag. */
+  const previewShape = useCallback((shape: ShapeItem) => {
+    socketRef.current?.emit('shape:preview', shape)
   }, [])
 
   const appendPoints = useCallback((id: string, points: StrokeItem['points']) => {
@@ -261,12 +272,12 @@ export function useBoard(room: string): Board {
   const clearBoard = useCallback(() => {
     itemsRef.current = []
     setItems([])
-    setLiveStrokeMap({})
+    setLiveItemMap({})
     resetHistory()
     socketRef.current?.emit('board:clear')
   }, [resetHistory])
 
-  const liveStrokes = useMemo(() => Object.values(liveStrokeMap), [liveStrokeMap])
+  const liveItems = useMemo(() => Object.values(liveItemMap), [liveItemMap])
   const canUndo = useMemo(() => {
     const present = new Set(items.map((item) => item.id))
     return history.some((action) => present.has(action.id))
@@ -274,7 +285,7 @@ export function useBoard(room: string): Board {
 
   return {
     items,
-    liveStrokes,
+    liveItems,
     status,
     peers,
     canUndo,
@@ -282,6 +293,7 @@ export function useBoard(room: string): Board {
     startStroke,
     appendPoints,
     completeStroke,
+    previewShape,
     addItem,
     moveItem,
     commitMove,
