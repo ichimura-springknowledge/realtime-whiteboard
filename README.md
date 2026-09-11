@@ -30,11 +30,25 @@ npm run dev
   （`client/.env.example` を参照）
 - サーバーの状態確認: `http://localhost:3001/health`
 
+## 使える機能
+
+| ツール | 操作 |
+|---|---|
+| ペン | ドラッグで描画。色と太さを変更できます |
+| 消しゴム | ドラッグでなぞった部分を消します（誰が描いた線でも消えます） |
+| 文字 | クリックした位置に入力欄が出ます。Enter で確定、Esc で取り消し |
+| 戻る / やり直す | `Ctrl+Z` / `Ctrl+Shift+Z`。**自分が追加したもの**だけを 1 つずつ取り消します |
+| 全消去 | ルーム全員の描画をすべて消します |
+
+戻る操作が自分の分だけを対象にするのは、共同編集中に他の人の描いたものが
+勝手に消えないようにするためです。
+
 ## 実装状況
 
 - [x] 1. Canvas へのフリーハンド描画（色・太さのツールバー）
 - [x] 2. socket.io によるルーム単位のリアルタイム同期
-- [ ] 3. undo / redo、消しゴム、図形描画（四角・丸・矢印）
+- [x] 3a. undo / redo、消しゴム、文字入力
+- [ ] 3b. 図形描画（四角・丸・矢印）
 - [ ] 4. 参加者カーソルのリアルタイム共有
 - [ ] 5. PNG / SVG エクスポート
 
@@ -44,8 +58,15 @@ npm run dev
 |---|---|---|
 | `board:init` | server → client | 入室時にルームの描画履歴を配信 |
 | `room:peers` | server → client | ルームの参加人数 |
-| `stroke:start` | 双方向 | 描き始め（線の色・太さ・始点） |
-| `stroke:points` | 双方向 | 描画中の点を逐次追加（フレームごと） |
-| `stroke:end` | 双方向 | 描き終わり。履歴に確定される |
+| `stroke:start` | client → server → client | 描き始め（線の色・太さ・始点） |
+| `stroke:points` | client → server → client | 描画中の点を逐次追加（フレームごと） |
+| `stroke:end` | client → server | 描き終わり。`item:add` として配信される |
 | `stroke:cancel` | server → client | 描画途中で切断した参加者の線を破棄 |
+| `item:add` | 双方向 | 確定した要素（線 / 文字）を履歴に追加 |
+| `item:remove` | 双方向 | 要素を 1 つ取り消す（戻る操作） |
 | `board:clear` | 双方向 | ルームの全消去 |
+
+履歴は「線」と「文字」を同じ 1 本の配列（`items`）として順番どおりに保持します。
+消しゴムは `erase: true` の線として同じ配列に入り、描画時に
+`globalCompositeOperation = 'destination-out'` で下の描画を削ります。
+これにより、消しゴム自体も「戻る」で取り消せます。

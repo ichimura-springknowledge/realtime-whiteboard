@@ -2,6 +2,12 @@ import { useState } from 'react'
 
 const COLORS = ['#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
 
+const TOOLS = [
+  { id: 'pen', label: 'ペン' },
+  { id: 'eraser', label: '消しゴム' },
+  { id: 'text', label: '文字' },
+]
+
 const STATUS_LABEL = {
   connecting: '接続中…',
   connected: '接続済み',
@@ -10,10 +16,16 @@ const STATUS_LABEL = {
 }
 
 export default function Toolbar({
+  tool,
+  onToolChange,
   color,
   onColorChange,
-  size,
+  sizeControl,
   onSizeChange,
+  canUndo,
+  canRedo,
+  onUndo,
+  onRedo,
   onClear,
   room,
   status,
@@ -33,7 +45,19 @@ export default function Toolbar({
 
   return (
     <header className="toolbar">
-      <span className="toolbar__title">Whiteboard</span>
+      <div className="toolbar__group" role="group" aria-label="ツール">
+        {TOOLS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            className={`tool${id === tool ? ' tool--active' : ''}`}
+            aria-pressed={id === tool}
+            onClick={() => onToolChange(id)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
 
       <div className="toolbar__group" role="group" aria-label="色">
         {COLORS.map((value) => (
@@ -57,20 +81,40 @@ export default function Toolbar({
       </div>
 
       <label className="toolbar__group toolbar__size">
-        太さ
+        {sizeControl.label}
         <input
           type="range"
-          min="1"
-          max="48"
-          value={size}
+          min={sizeControl.min}
+          max={sizeControl.max}
+          value={sizeControl.value}
           onChange={(event) => onSizeChange(Number(event.target.value))}
         />
-        <span className="toolbar__size-value">{size}</span>
+        <span className="toolbar__size-value">{sizeControl.value}</span>
       </label>
 
-      <button type="button" className="button" onClick={onClear}>
-        全消去
-      </button>
+      <div className="toolbar__group">
+        <button
+          type="button"
+          className="button"
+          onClick={onUndo}
+          disabled={!canUndo}
+          title="一手戻る (Ctrl+Z)"
+        >
+          ↶ 戻る
+        </button>
+        <button
+          type="button"
+          className="button"
+          onClick={onRedo}
+          disabled={!canRedo}
+          title="やり直す (Ctrl+Shift+Z)"
+        >
+          ↷ やり直す
+        </button>
+        <button type="button" className="button" onClick={onClear}>
+          全消去
+        </button>
+      </div>
 
       <div className="toolbar__room">
         <span className={`status status--${status}`}>{STATUS_LABEL[status] ?? status}</span>

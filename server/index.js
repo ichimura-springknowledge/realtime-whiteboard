@@ -7,7 +7,8 @@ const PORT = Number(process.env.PORT) || 3001
 const ORIGIN = process.env.CLIENT_ORIGIN || '*'
 
 const MAX_POINTS_PER_MESSAGE = 10000
-const MAX_STROKES_PER_ROOM = 3000
+const MAX_ITEMS_PER_ROOM = 3000
+const MAX_TEXT_LENGTH = 500
 
 const app = express()
 app.use(cors({ origin: ORIGIN }))
@@ -15,13 +16,13 @@ app.use(cors({ origin: ORIGIN }))
 const server = http.createServer(app)
 const io = new Server(server, { cors: { origin: ORIGIN } })
 
-/** roomId -> { strokes: Stroke[], live: Map<socketId, string> } */
+/** roomId -> { items: Item[], live: Map<socketId, string> } */
 const rooms = new Map()
 
 const getRoom = (roomId) => {
   let room = rooms.get(roomId)
   if (!room) {
-    room = { strokes: [], live: new Map() }
+    room = { items: [], live: new Map() }
     rooms.set(roomId, room)
   }
   return room
@@ -36,6 +37,14 @@ const normalizeRoomId = (value) => {
   return cleaned || 'lobby'
 }
 
+const clamp = (value, min, max, fallback) =>
+  Number.isFinite(value) ? Math.min(Math.max(value, min), max) : fallback
+
+const sanitizeId = (value) =>
+  typeof value === 'string' && value.length > 0 ? value.slice(0, 64) : null
+
+const sanitizeColor = (value) => (typeof value === 'string' ? value.slice(0, 32) : '#111827')
+
 const sanitizePoints = (raw) => {
   if (!Array.isArray(raw)) return null
   const points = []
@@ -49,18 +58,47 @@ const sanitizePoints = (raw) => {
 }
 
 const sanitizeStroke = (raw) => {
-  if (!raw || typeof raw !== 'object') return null
-  if (typeof raw.id !== 'string' || raw.id.length === 0) return null
+  const id = sanitizeId(raw.id)
   const points = sanitizePoints(raw.points)
-  if (!points) return null
+  if (!id || !points) return null
 
   return {
-    id: raw.id.slice(0, 64),
-    color: typeof raw.color === 'string' ? raw.color.slice(0, 32) : '#111827',
-    size: Number.isFinite(raw.size) ? Math.min(Math.max(raw.size, 1), 200) : 8,
+    id,
+    type: 'stroke',
+    color: sanitizeColor(raw.color),
+    size: clamp(raw.size, 1, 200, 8),
     simulatePressure: raw.simulatePressure !== false,
+    erase: raw.erase === true,
     points,
   }
+}
+
+const sanitizeText = (raw) => {
+  const id = sanitizeId(raw.id)
+  const text = typeof raw.text === 'string' ? raw.text.slice(0, MAX_TEXT_LENGTH) : ''
+  if (!id || text.trim().length === 0) return null
+  if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) return null
+
+  return {
+    id,
+    type: 'text',
+    color: sanitizeColor(raw.color),
+    size: clamp(raw.size, 8, 200, 24),
+    x: raw.x,
+    y: raw.y,
+    text,
+  }
+}
+
+const sanitizeItem = (raw) => {
+  if (!raw || typeof raw !== 'object') return null
+  return raw.type === 'text' ? sanitizeText(raw) : sanitizeStroke(raw)
+}
+
+const appendItem = (room, item) => {
+  room.items.push(item)
+  // Oldest items drop out once a room gets very long, to bound memory.
+  if (room.items.length > MAX_ITEMS_PER_ROOM) room.items.shift()
 }
 
 const peerCount = (roomId) => io.sockets.adapter.rooms.get(roomId)?.size ?? 0
@@ -70,7 +108,7 @@ app.get('/health', (_req, res) => {
     ok: true,
     rooms: [...rooms.entries()].map(([id, room]) => ({
       id,
-      strokes: room.strokes.length,
+      items: room.items.length,
       peers: peerCount(id),
     })),
   })
@@ -81,12 +119,12 @@ io.on('connection', (socket) => {
   const room = getRoom(roomId)
   socket.join(roomId)
 
-  socket.emit('board:init', { room: roomId, strokes: room.strokes })
+  socket.emit('board:init', { room: roomId, items: room.items })
   io.to(roomId).emit('room:peers', peerCount(roomId))
 
   socket.on('stroke:start', (raw) => {
-    const stroke = sanitizeStroke(raw)
-    if (!stroke) return
+    const stroke = sanitizeItem(raw)
+    if (!stroke || stroke.type !== 'stroke') return
     room.live.set(socket.id, stroke.id)
     socket.to(roomId).emit('stroke:start', stroke)
   })
@@ -99,17 +137,33 @@ io.on('connection', (socket) => {
   })
 
   socket.on('stroke:end', (raw) => {
-    const stroke = sanitizeStroke(raw)
-    if (!stroke) return
+    const stroke = sanitizeItem(raw)
+    if (!stroke || stroke.type !== 'stroke') return
     room.live.delete(socket.id)
-    room.strokes.push(stroke)
-    // Oldest strokes drop out once a room gets very long, to bound memory.
-    if (room.strokes.length > MAX_STROKES_PER_ROOM) room.strokes.shift()
-    socket.to(roomId).emit('stroke:end', stroke)
+    appendItem(room, stroke)
+    socket.to(roomId).emit('item:add', stroke)
+  })
+
+  // Text, and anything re-added by redo.
+  socket.on('item:add', (raw) => {
+    const item = sanitizeItem(raw)
+    if (!item) return
+    if (room.items.some((existing) => existing.id === item.id)) return
+    appendItem(room, item)
+    socket.to(roomId).emit('item:add', item)
+  })
+
+  socket.on('item:remove', (payload) => {
+    const id = sanitizeId(payload?.id)
+    if (!id) return
+    const index = room.items.findIndex((item) => item.id === id)
+    if (index === -1) return
+    room.items.splice(index, 1)
+    socket.to(roomId).emit('item:remove', { id })
   })
 
   socket.on('board:clear', () => {
-    room.strokes = []
+    room.items = []
     room.live.clear()
     io.to(roomId).emit('board:clear')
   })
@@ -121,7 +175,7 @@ io.on('connection', (socket) => {
       socket.to(roomId).emit('stroke:cancel', { id: liveId })
     }
     io.to(roomId).emit('room:peers', peerCount(roomId))
-    if (peerCount(roomId) === 0 && room.strokes.length === 0) rooms.delete(roomId)
+    if (peerCount(roomId) === 0 && room.items.length === 0) rooms.delete(roomId)
   })
 })
 

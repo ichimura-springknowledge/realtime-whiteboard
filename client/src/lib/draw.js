@@ -1,7 +1,9 @@
 import { getStroke } from 'perfect-freehand'
 
+export const TEXT_FONT = "system-ui, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif"
+export const TEXT_LINE_HEIGHT = 1.3
+
 const BASE_OPTIONS = {
-  thinning: 0.6,
   smoothing: 0.5,
   streamline: 0.5,
   easing: (t) => Math.sin((t * Math.PI) / 2),
@@ -11,10 +13,13 @@ const BASE_OPTIONS = {
 
 // `last: false` keeps the tail of an in-progress stroke from being capped early.
 export function strokeOptions(stroke, { last = true } = {}) {
+  const erasing = stroke.erase === true
   return {
     ...BASE_OPTIONS,
     size: stroke.size,
-    simulatePressure: stroke.simulatePressure !== false,
+    // The eraser keeps a constant width so its edge is predictable.
+    thinning: erasing ? 0 : 0.6,
+    simulatePressure: erasing ? false : stroke.simulatePressure !== false,
     last,
   }
 }
@@ -49,6 +54,32 @@ export function drawStroke(ctx, stroke, { last = true } = {}) {
   const outline = getStroke(stroke.points, strokeOptions(stroke, { last }))
   const d = getSvgPathFromStroke(outline)
   if (!d) return
-  ctx.fillStyle = stroke.color
+
+  ctx.save()
+  if (stroke.erase) {
+    // Erasing clears whatever is already on the canvas instead of painting.
+    ctx.globalCompositeOperation = 'destination-out'
+    ctx.fillStyle = '#000000'
+  } else {
+    ctx.fillStyle = stroke.color
+  }
   ctx.fill(new Path2D(d))
+  ctx.restore()
+}
+
+export function drawText(ctx, item) {
+  if (!item || !item.text) return
+  ctx.save()
+  ctx.fillStyle = item.color
+  ctx.font = `${item.size}px ${TEXT_FONT}`
+  ctx.textBaseline = 'top'
+  item.text.split('\n').forEach((line, index) => {
+    ctx.fillText(line, item.x, item.y + index * item.size * TEXT_LINE_HEIGHT)
+  })
+  ctx.restore()
+}
+
+export function drawItem(ctx, item, options) {
+  if (item?.type === 'text') drawText(ctx, item)
+  else drawStroke(ctx, item, options)
 }
