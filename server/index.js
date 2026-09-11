@@ -1,5 +1,6 @@
 const fs = require('node:fs')
 const http = require('node:http')
+const os = require('node:os')
 const path = require('node:path')
 const express = require('express')
 const cors = require('cors')
@@ -21,12 +22,23 @@ const MAX_TEXT_LENGTH = 500
 const isAllowed = createAccessGuard({ allowedCidrs: process.env.ALLOWED_CIDRS })
 const store = createStore({ file: DATA_FILE })
 
+// Refusals are logged once per address, so a colleague who cannot get in can be
+// told straight away whether their request even reached this machine.
+const refused = new Set()
+const logRefusal = (address, kind) => {
+  const key = `${kind}:${address}`
+  if (refused.has(key)) return
+  refused.add(key)
+  console.warn(`拒否: ${address} (${kind}) — 許可範囲: ${isAllowed.describe()}`)
+}
+
 const app = express()
 app.use(cors({ origin: ORIGIN }))
 
 // Refuse anything from outside the network before it reaches a route.
 app.use((req, res, next) => {
   if (isAllowed(req.socket.remoteAddress)) return next()
+  logRefusal(req.socket.remoteAddress, 'HTTP')
   res.status(403).type('text/plain; charset=utf-8').send('このホワイトボードは社内ネットワーク内からのみ利用できます。')
 })
 
@@ -35,6 +47,7 @@ const io = new Server(server, { cors: { origin: ORIGIN } })
 
 io.use((socket, next) => {
   if (isAllowed(socket.handshake.address)) return next()
+  logRefusal(socket.handshake.address, 'WebSocket')
   next(new Error('outside the allowed network'))
 })
 
@@ -239,9 +252,29 @@ const shutdown = () => {
 process.on('SIGINT', shutdown)
 process.on('SIGTERM', shutdown)
 
+/** The addresses colleagues should actually type, rather than localhost. */
+const lanAddresses = () =>
+  Object.values(os.networkInterfaces())
+    .flat()
+    .filter((entry) => entry && entry.family === 'IPv4' && !entry.internal)
+    .map((entry) => entry.address)
+
 server.listen(PORT, HOST, () => {
   const boards = [...rooms.values()].reduce((total, room) => total + room.items.length, 0)
-  console.log(`whiteboard server listening on http://localhost:${PORT} (bound to ${HOST})`)
+  const serving = fs.existsSync(path.join(clientDist, 'index.html'))
+
+  console.log(`whiteboard server listening on port ${PORT} (bound to ${HOST})`)
   console.log(`  接続を許可する範囲: ${isAllowed.describe()}`)
   console.log(`  保存先: ${DATA_FILE} (${rooms.size} ルーム / ${boards} 要素を復元)`)
+  if (!serving) {
+    console.log('  クライアント: 未ビルド (client で npm run build すると同じポートで配信します)')
+  }
+  console.log('  同僚に共有する URL:')
+  for (const address of lanAddresses()) {
+    console.log(`    http://${address}:${PORT}/`)
+  }
+  console.log('  つながらない場合は Windows ファイアウォールの受信許可を確認してください:')
+  console.log(
+    `    New-NetFirewallRule -DisplayName "Realtime Whiteboard" -Direction Inbound -Protocol TCP -LocalPort ${PORT} -Action Allow -Profile Any -RemoteAddress LocalSubnet`,
+  )
 })

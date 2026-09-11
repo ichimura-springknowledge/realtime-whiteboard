@@ -65,6 +65,48 @@ ALLOWED_CIDRS=192.168.1.50/32                 # 1 台だけ
 信用しません（詐称できるため）。リバースプロキシの背後に置く場合はこの前提が
 崩れるので、プロキシ側で制限してください。
 
+### つながらないとき
+
+サーバー起動時のログに、共有すべき URL と、ファイアウォールの設定コマンドが
+表示されます。まずそこを確認してください。
+
+**1. Windows ファイアウォールの受信許可（最初にこれを疑う）**
+
+Windows は既定で外部からの接続を遮断します。とくに Wi-Fi が「パブリック
+ネットワーク」に分類されていると、ポートを開けない限り同僚からは一切つながりません。
+**管理者として実行した PowerShell** で一度だけ設定します。
+
+```powershell
+New-NetFirewallRule -DisplayName "Realtime Whiteboard" -Direction Inbound `
+  -Protocol TCP -LocalPort 3001 -Action Allow -Profile Any -RemoteAddress LocalSubnet
+```
+
+`-RemoteAddress LocalSubnet` で同じサブネットからの接続だけに限定しています。
+現在の状態は `Get-NetConnectionProfile`（ネットワークの分類）と
+`Get-NetFirewallRule -DisplayName "Realtime Whiteboard"` で確認できます。
+元に戻すときは `Remove-NetFirewallRule -DisplayName "Realtime Whiteboard"` です。
+
+**2. 切り分け** — 同僚のブラウザで `http://<サーバー機の IP>:3001/health` を開きます。
+
+| 症状 | 原因 |
+|---|---|
+| ページが開けない / タイムアウト | ファイアウォール、または Wi-Fi のプライバシーセパレータ（下記） |
+| JSON が表示される | ネットワークは通っている。URL のポート番号やルーム ID を確認 |
+| 403「社内ネットワーク内からのみ…」 | `ALLOWED_CIDRS` の範囲外。サーバーのログに拒否した IP が出ます |
+
+**3. Wi-Fi のプライバシーセパレータ / AP アイソレーション**
+
+アクセスポイントの機能で、同じ Wi-Fi につながった端末同士の通信を遮断する設定です。
+来客用 Wi-Fi では既定で有効なことが多く、有効だと**どうやってもつながりません**。
+ファイアウォールを開けても駄目な場合はこれを疑い、ネットワーク管理者に確認するか、
+サーバー機を有線 LAN につないでください。
+
+**4. その他**
+
+- サーバー機と同僚が別のサブネット（例: 社員用と来客用で分かれている）にいないか
+- `ipconfig` で確認した IP と、共有した URL の IP が一致しているか
+- スリープでサーバー機が落ちていないか（電源設定でスリープを無効にしておく）
+
 ### 保存について
 
 - 保存先: `server/data/boards.json`（`DATA_FILE` 環境変数で変更可）
