@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { CSSProperties } from 'react'
+import { copyText } from '../lib/clipboard'
 import type { ConnectionStatus, Tool } from '../types'
 
 const COLORS = ['#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
@@ -67,13 +68,14 @@ export default function Toolbar({
   const [copied, setCopied] = useState(false)
 
   const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(window.location.href)
+    const url = window.location.href
+    if (await copyText(url)) {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    } catch {
-      window.prompt('この URL を共有してください', window.location.href)
+      return
     }
+    // Last resort: show it so it can be copied by hand.
+    window.prompt('この URL をコピーして共有してください', url)
   }
 
   return (
