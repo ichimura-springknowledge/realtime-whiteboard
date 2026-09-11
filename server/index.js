@@ -1,23 +1,47 @@
+const fs = require('node:fs')
 const http = require('node:http')
+const path = require('node:path')
 const express = require('express')
 const cors = require('cors')
 const { Server } = require('socket.io')
+const { createAccessGuard } = require('./access')
+const { createStore } = require('./store')
 
 const PORT = Number(process.env.PORT) || 3001
+const HOST = process.env.HOST || '0.0.0.0'
 const ORIGIN = process.env.CLIENT_ORIGIN || '*'
+const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'boards.json')
 
 const MAX_POINTS_PER_MESSAGE = 10000
 const MAX_ITEMS_PER_ROOM = 3000
 const MAX_TEXT_LENGTH = 500
 
+// Only machines on the local network may reach the board. Set ALLOWED_CIDRS to
+// narrow it further, e.g. ALLOWED_CIDRS=192.168.1.0/24
+const isAllowed = createAccessGuard({ allowedCidrs: process.env.ALLOWED_CIDRS })
+const store = createStore({ file: DATA_FILE })
+
 const app = express()
 app.use(cors({ origin: ORIGIN }))
+
+// Refuse anything from outside the network before it reaches a route.
+app.use((req, res, next) => {
+  if (isAllowed(req.socket.remoteAddress)) return next()
+  res.status(403).type('text/plain; charset=utf-8').send('このホワイトボードは社内ネットワーク内からのみ利用できます。')
+})
 
 const server = http.createServer(app)
 const io = new Server(server, { cors: { origin: ORIGIN } })
 
+io.use((socket, next) => {
+  if (isAllowed(socket.handshake.address)) return next()
+  next(new Error('outside the allowed network'))
+})
+
 /** roomId -> { items: Item[], live: Map<socketId, string> } */
-const rooms = new Map()
+const rooms = store.load()
+
+const persist = () => store.save(rooms)
 
 const getRoom = (roomId) => {
   let room = rooms.get(roomId)
@@ -106,6 +130,8 @@ const peerCount = (roomId) => io.sockets.adapter.rooms.get(roomId)?.size ?? 0
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
+    storage: DATA_FILE,
+    allowedFrom: isAllowed.describe(),
     rooms: [...rooms.entries()].map(([id, room]) => ({
       id,
       items: room.items.length,
@@ -113,6 +139,13 @@ app.get('/health', (_req, res) => {
     })),
   })
 })
+
+// Serve the built client when it exists, so the whole board is one address.
+const clientDist = path.resolve(__dirname, '..', 'client', 'dist')
+if (fs.existsSync(path.join(clientDist, 'index.html'))) {
+  app.use(express.static(clientDist))
+  app.use((_req, res) => res.sendFile(path.join(clientDist, 'index.html')))
+}
 
 io.on('connection', (socket) => {
   const roomId = normalizeRoomId(socket.handshake.query.room)
@@ -142,6 +175,7 @@ io.on('connection', (socket) => {
     room.live.delete(socket.id)
     appendItem(room, stroke)
     socket.to(roomId).emit('item:add', stroke)
+    persist()
   })
 
   // Text, and anything re-added by redo.
@@ -151,6 +185,7 @@ io.on('connection', (socket) => {
     if (room.items.some((existing) => existing.id === item.id)) return
     appendItem(room, item)
     socket.to(roomId).emit('item:add', item)
+    persist()
   })
 
   // Only text carries a position; strokes are fixed where they were drawn.
@@ -162,6 +197,7 @@ io.on('connection', (socket) => {
     item.x = payload.x
     item.y = payload.y
     socket.to(roomId).emit('item:move', { id, x: item.x, y: item.y })
+    persist()
   })
 
   socket.on('item:remove', (payload) => {
@@ -171,12 +207,14 @@ io.on('connection', (socket) => {
     if (index === -1) return
     room.items.splice(index, 1)
     socket.to(roomId).emit('item:remove', { id })
+    persist()
   })
 
   socket.on('board:clear', () => {
     room.items = []
     room.live.clear()
     io.to(roomId).emit('board:clear')
+    persist()
   })
 
   socket.on('disconnect', () => {
@@ -186,10 +224,24 @@ io.on('connection', (socket) => {
       socket.to(roomId).emit('stroke:cancel', { id: liveId })
     }
     io.to(roomId).emit('room:peers', peerCount(roomId))
-    if (peerCount(roomId) === 0 && room.items.length === 0) rooms.delete(roomId)
+    // An empty board with nobody in it is worth forgetting; a drawn one is not.
+    if (peerCount(roomId) === 0 && room.items.length === 0) {
+      rooms.delete(roomId)
+      persist()
+    }
   })
 })
 
-server.listen(PORT, () => {
-  console.log(`whiteboard server listening on http://localhost:${PORT}`)
+const shutdown = () => {
+  store.flush()
+  process.exit(0)
+}
+process.on('SIGINT', shutdown)
+process.on('SIGTERM', shutdown)
+
+server.listen(PORT, HOST, () => {
+  const boards = [...rooms.values()].reduce((total, room) => total + room.items.length, 0)
+  console.log(`whiteboard server listening on http://localhost:${PORT} (bound to ${HOST})`)
+  console.log(`  接続を許可する範囲: ${isAllowed.describe()}`)
+  console.log(`  保存先: ${DATA_FILE} (${rooms.size} ルーム / ${boards} 要素を復元)`)
 })
