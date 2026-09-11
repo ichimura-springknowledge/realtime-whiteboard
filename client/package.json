@@ -5,9 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host",
-    "build": "vite build",
+    "build": "tsc --noEmit && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "perfect-freehand": "^1.2.3",
@@ -16,10 +17,12 @@
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
+    "@types/node": "^22.20.2",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "oxlint": "^1.81.0",
+    "typescript": "^7.0.2",
     "vite": "^8.3.0"
   }
 }

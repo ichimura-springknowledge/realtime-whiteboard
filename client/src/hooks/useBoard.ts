@@ -1,9 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { io } from 'socket.io-client'
+import { io, type Socket } from 'socket.io-client'
+import type {
+  BoardAction,
+  BoardItem,
+  ClientToServerEvents,
+  ConnectionStatus,
+  Position,
+  RedoAction,
+  ServerToClientEvents,
+  StrokeItem,
+} from '../types'
+
+type BoardSocket = Socket<ServerToClientEvents, ClientToServerEvents>
 
 // Only used by `npm run dev`, where the client is served by Vite and the
 // whiteboard server is a separate process.
-const DEV_SERVER_PORT = import.meta.env.VITE_SERVER_PORT || '3001'
+const DEV_SERVER_PORT = import.meta.env.VITE_SERVER_PORT || '5000'
 
 /**
  * Where the whiteboard server lives.
@@ -12,7 +24,7 @@ const DEV_SERVER_PORT = import.meta.env.VITE_SERVER_PORT || '3001'
  * the same origin whatever port that happens to be - which matters, because the
  * port is chosen to suit the office firewall rather than being fixed.
  */
-function resolveServerUrl() {
+function resolveServerUrl(): string | undefined {
   if (import.meta.env.VITE_SERVER_URL) return import.meta.env.VITE_SERVER_URL
   if (!import.meta.env.DEV) return undefined
   const { protocol, hostname } = window.location
@@ -21,15 +33,38 @@ function resolveServerUrl() {
 
 const SERVER_URL = resolveServerUrl()
 
-const withoutStroke = (strokes, id) => {
+const withoutStroke = (
+  strokes: Record<string, StrokeItem>,
+  id: string,
+): Record<string, StrokeItem> => {
   if (!(id in strokes)) return strokes
   const next = { ...strokes }
   delete next[id]
   return next
 }
 
-const moveIn = (items, id, position) =>
-  items.map((item) => (item.id === id ? { ...item, x: position.x, y: position.y } : item))
+const moveIn = (items: BoardItem[], id: string, position: Position): BoardItem[] =>
+  items.map((item) =>
+    item.id === id && item.type === 'text' ? { ...item, x: position.x, y: position.y } : item,
+  )
+
+export interface Board {
+  items: BoardItem[]
+  liveStrokes: StrokeItem[]
+  status: ConnectionStatus
+  peers: number
+  canUndo: boolean
+  canRedo: boolean
+  startStroke: (stroke: StrokeItem) => void
+  appendPoints: (id: string, points: StrokeItem['points']) => void
+  completeStroke: (stroke: StrokeItem) => void
+  addItem: (item: BoardItem) => void
+  moveItem: (id: string, x: number, y: number) => void
+  commitMove: (id: string, from: Position, to: Position) => void
+  undo: () => void
+  redo: () => void
+  clearBoard: () => void
+}
 
 /**
  * Owns the board state for one room: the items everyone has committed, the
@@ -40,13 +75,13 @@ const moveIn = (items, id, position) =>
  * only ever takes back your own work and never someone else's, which is what
  * people expect on a shared board.
  */
-export function useBoard(room) {
-  const socketRef = useRef(null)
-  const [items, setItems] = useState([])
-  const [liveStrokeMap, setLiveStrokeMap] = useState({})
-  const [history, setHistory] = useState([])
-  const [redoStack, setRedoStack] = useState([])
-  const [status, setStatus] = useState('connecting')
+export function useBoard(room: string): Board {
+  const socketRef = useRef<BoardSocket | null>(null)
+  const [items, setItems] = useState<BoardItem[]>([])
+  const [liveStrokeMap, setLiveStrokeMap] = useState<Record<string, StrokeItem>>({})
+  const [history, setHistory] = useState<BoardAction[]>([])
+  const [redoStack, setRedoStack] = useState<RedoAction[]>([])
+  const [status, setStatus] = useState<ConnectionStatus>('connecting')
   const [peers, setPeers] = useState(1)
 
   // Mirrors of the state above, so the callbacks below can read the current
@@ -69,7 +104,7 @@ export function useBoard(room) {
   }, [])
 
   useEffect(() => {
-    const socket = io(SERVER_URL, { query: { room } })
+    const socket: BoardSocket = io(SERVER_URL, { query: { room } })
     socketRef.current = socket
 
     socket.on('connect', () => setStatus('connected'))
@@ -119,7 +154,7 @@ export function useBoard(room) {
     }
   }, [room, resetHistory])
 
-  const pushAction = useCallback((action) => {
+  const pushAction = useCallback((action: BoardAction) => {
     historyRef.current = [...historyRef.current, action]
     setHistory(historyRef.current)
     redoStackRef.current = []
@@ -127,7 +162,7 @@ export function useBoard(room) {
   }, [])
 
   const addItem = useCallback(
-    (item) => {
+    (item: BoardItem) => {
       setItems((prev) => [...prev, item])
       pushAction({ type: 'add', id: item.id })
       socketRef.current?.emit('item:add', item)
@@ -135,16 +170,16 @@ export function useBoard(room) {
     [pushAction],
   )
 
-  const startStroke = useCallback((stroke) => {
+  const startStroke = useCallback((stroke: StrokeItem) => {
     socketRef.current?.emit('stroke:start', stroke)
   }, [])
 
-  const appendPoints = useCallback((id, points) => {
+  const appendPoints = useCallback((id: string, points: StrokeItem['points']) => {
     socketRef.current?.emit('stroke:points', { id, points })
   }, [])
 
   const completeStroke = useCallback(
-    (stroke) => {
+    (stroke: StrokeItem) => {
       setItems((prev) => [...prev, stroke])
       pushAction({ type: 'add', id: stroke.id })
       socketRef.current?.emit('stroke:end', stroke)
@@ -152,7 +187,7 @@ export function useBoard(room) {
     [pushAction],
   )
 
-  const applyMove = useCallback((id, position) => {
+  const applyMove = useCallback((id: string, position: Position) => {
     itemsRef.current = moveIn(itemsRef.current, id, position)
     setItems(itemsRef.current)
     socketRef.current?.emit('item:move', { id, x: position.x, y: position.y })
@@ -160,7 +195,7 @@ export function useBoard(room) {
 
   /** Live position update while an item is being dragged; not a history entry. */
   const moveItem = useCallback(
-    (id, x, y) => {
+    (id: string, x: number, y: number) => {
       applyMove(id, { x, y })
     },
     [applyMove],
@@ -168,7 +203,7 @@ export function useBoard(room) {
 
   /** Records a finished drag so it can be undone. */
   const commitMove = useCallback(
-    (id, from, to) => {
+    (id: string, from: Position, to: Position) => {
       if (from.x === to.x && from.y === to.y) return
       pushAction({ type: 'move', id, from, to })
     },
@@ -178,7 +213,7 @@ export function useBoard(room) {
   const undo = useCallback(() => {
     const actions = historyRef.current
     for (let i = actions.length - 1; i >= 0; i--) {
-      const action = actions[i]
+      const action = actions[i]!
       const item = itemsRef.current.find((candidate) => candidate.id === action.id)
       // Skip actions whose item is already gone (someone cleared the board, say).
       if (!item) continue
@@ -203,8 +238,8 @@ export function useBoard(room) {
 
   const redo = useCallback(() => {
     const stack = redoStackRef.current
-    if (stack.length === 0) return
     const action = stack[stack.length - 1]
+    if (!action) return
 
     redoStackRef.current = stack.slice(0, -1)
     setRedoStack(redoStackRef.current)

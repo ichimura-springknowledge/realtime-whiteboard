@@ -1,12 +1,12 @@
 const ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789'
 
-const randomRoomId = () => {
+const randomRoomId = (): string => {
   const bytes = new Uint8Array(8)
   crypto.getRandomValues(bytes)
   return Array.from(bytes, (byte) => ALPHABET[byte % ALPHABET.length]).join('')
 }
 
-const normalize = (value) =>
+const normalize = (value: string | null): string =>
   String(value ?? '')
     .trim()
     .replace(/[^\w-]/g, '')
@@ -16,7 +16,7 @@ const normalize = (value) =>
  * Reads ?room=xxx from the URL. When it is missing a room is generated and
  * written back with replaceState so the URL is always shareable.
  */
-export function resolveRoomFromUrl() {
+export function resolveRoomFromUrl(): string {
   const params = new URLSearchParams(window.location.search)
   const fromUrl = normalize(params.get('room'))
   if (fromUrl) return fromUrl

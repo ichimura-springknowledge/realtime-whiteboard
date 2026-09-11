@@ -1,19 +1,28 @@
 import { useEffect, useRef } from 'react'
+import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { TEXT_FONT, TEXT_LINE_HEIGHT } from '../lib/draw'
+import type { TextDraft } from '../types'
+
+interface TextEditorProps {
+  draft: TextDraft
+  onChange: (text: string) => void
+  onCommit: () => void
+  onCancel: () => void
+}
 
 /**
  * A single-line input laid over the canvas at the click position, styled to
  * match how the committed text will be painted. Enter commits, Escape cancels,
  * and moving focus elsewhere (the toolbar, say) commits whatever was typed.
  */
-export default function TextEditor({ draft, onChange, onCommit, onCancel }) {
-  const inputRef = useRef(null)
+export default function TextEditor({ draft, onChange, onCommit, onCancel }: TextEditorProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     inputRef.current?.focus()
   }, [])
 
-  const handleKeyDown = (event) => {
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
       event.preventDefault()
       onCommit()

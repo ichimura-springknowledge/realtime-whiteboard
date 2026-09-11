@@ -1,17 +1,37 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { drawItem, drawStroke, hitTestText } from '../lib/draw'
+import type { PointerEvent as ReactPointerEvent } from 'react'
+import { drawItem, drawStroke, hitTestText, pointFromEvent } from '../lib/draw'
+import type { BoardItem, Point, Position, StrokeItem, TextDraft, Tool } from '../types'
 import TextEditor from './TextEditor'
 
-const createId = () =>
+const createId = (): string =>
   typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`
 
-const pointFromEvent = (event, rect) => [
-  event.clientX - rect.left,
-  event.clientY - rect.top,
-  event.pressure > 0 ? event.pressure : 0.5,
-]
+interface DragState {
+  id: string
+  grabX: number
+  grabY: number
+  from: Position
+  last: Position
+  pending: Position | null
+}
+
+interface CanvasProps {
+  tool: Tool
+  color: string
+  size: number
+  fontSize: number
+  items: BoardItem[]
+  liveStrokes: StrokeItem[]
+  onStrokeStart: (stroke: StrokeItem) => void
+  onStrokePoints: (id: string, points: Point[]) => void
+  onStrokeComplete: (stroke: StrokeItem) => void
+  onAddText: (item: BoardItem) => void
+  onMoveText: (id: string, x: number, y: number) => void
+  onCommitMove: (id: string, from: Position, to: Position) => void
+}
 
 export default function Canvas({
   tool,
@@ -26,16 +46,16 @@ export default function Canvas({
   onAddText,
   onMoveText,
   onCommitMove,
-}) {
-  const canvasRef = useRef(null)
-  const ctxRef = useRef(null)
-  const currentRef = useRef(null)
-  const dragRef = useRef(null)
+}: CanvasProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const ctxRef = useRef<CanvasRenderingContext2D | null>(null)
+  const currentRef = useRef<StrokeItem | null>(null)
+  const dragRef = useRef<DragState | null>(null)
   const sentPointsRef = useRef(0)
   const frameRef = useRef(0)
   const itemsRef = useRef(items)
   const liveStrokesRef = useRef(liveStrokes)
-  const [draft, setDraft] = useState(null)
+  const [draft, setDraft] = useState<TextDraft | null>(null)
 
   const redraw = useCallback(() => {
     const canvas = canvasRef.current
@@ -59,7 +79,7 @@ export default function Canvas({
     const pending = stroke.points.slice(sentPointsRef.current)
     if (pending.length === 0) return
     sentPointsRef.current = stroke.points.length
-    onStrokePoints?.(stroke.id, pending)
+    onStrokePoints(stroke.id, pending)
   }, [onStrokePoints])
 
   // A drag produces far more pointer events than frames, so the dragged position
@@ -85,6 +105,7 @@ export default function Canvas({
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current
+    if (!canvas) return
     ctxRef.current = canvas.getContext('2d')
 
     const resize = () => {
@@ -115,9 +136,9 @@ export default function Canvas({
     scheduleRedraw()
   }, [items, liveStrokes, scheduleRedraw])
 
-  const commitDraft = (pending) => {
+  const commitDraft = (pending: TextDraft | null) => {
     const value = pending?.text.trim()
-    if (!value) return
+    if (!pending || !value) return
     onAddText({
       id: createId(),
       type: 'text',
@@ -129,14 +150,17 @@ export default function Canvas({
     })
   }
 
-  const closeDraft = (pending) => {
+  const closeDraft = (pending: TextDraft | null) => {
     commitDraft(pending)
     setDraft(null)
   }
 
-  const handlePointerDown = (event) => {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const canvas = canvasRef.current
+    const ctx = ctxRef.current
+    if (!canvas || !ctx) return
+
     const rect = canvas.getBoundingClientRect()
     const x = event.clientX - rect.left
     const y = event.clientY - rect.top
@@ -146,7 +170,7 @@ export default function Canvas({
       // canvas right after the editor mounts, blurring it away instantly.
       event.preventDefault()
 
-      const hit = hitTestText(ctxRef.current, itemsRef.current, x, y)
+      const hit = hitTestText(ctx, itemsRef.current, x, y)
       if (hit) {
         // Grabbing existing text moves it instead of starting a new one.
         closeDraft(draft)
@@ -168,7 +192,7 @@ export default function Canvas({
     }
 
     canvas.setPointerCapture(event.pointerId)
-    const stroke = {
+    const stroke: StrokeItem = {
       id: createId(),
       type: 'stroke',
       color,
@@ -179,12 +203,15 @@ export default function Canvas({
     }
     currentRef.current = stroke
     sentPointsRef.current = stroke.points.length
-    onStrokeStart?.(stroke)
+    onStrokeStart(stroke)
     scheduleRedraw()
   }
 
-  const handlePointerMove = (event) => {
+  const handlePointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
+    const ctx = ctxRef.current
+    if (!canvas || !ctx) return
+
     const rect = canvas.getBoundingClientRect()
     const drag = dragRef.current
 
@@ -203,7 +230,7 @@ export default function Canvas({
         // Hint that the text under the pointer can be picked up. Set straight on
         // the element, so hovering never re-renders the canvas.
         const over = hitTestText(
-          ctxRef.current,
+          ctx,
           itemsRef.current,
           event.clientX - rect.left,
           event.clientY - rect.top,
@@ -222,8 +249,9 @@ export default function Canvas({
     scheduleRedraw()
   }
 
-  const handlePointerUp = (event) => {
+  const handlePointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current
+    if (!canvas) return
     const release = () => {
       if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId)
     }
@@ -261,7 +289,7 @@ export default function Canvas({
       {draft && (
         <TextEditor
           draft={draft}
-          onChange={(text) => setDraft((prev) => ({ ...prev, text }))}
+          onChange={(text) => setDraft((prev) => (prev ? { ...prev, text } : prev))}
           onCommit={() => closeDraft(draft)}
           onCancel={() => setDraft(null)}
         />

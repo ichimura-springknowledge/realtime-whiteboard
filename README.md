@@ -2,8 +2,8 @@
 
 社内 LAN で複数人が同時に使える、ログイン不要のホワイトボード。
 
-- `client/` — React + Vite のフロントエンド（Canvas 描画 / perfect-freehand）
-- `server/` — Node.js + Express + socket.io のリアルタイム配信サーバー
+- `client/` — React + **TypeScript** + Vite（Canvas 描画 / perfect-freehand）
+- `server/` — **Python** + FastAPI + python-socketio（リアルタイム配信・永続化）
 
 描いた内容はサーバーのディスクに保存されるので、**全員がブラウザを閉じても、
 サーバーを再起動しても消えません**。
@@ -15,12 +15,14 @@
 
 ```bash
 # 1) 一度だけ: 依存関係の取得とクライアントのビルド
-cd server && npm install && cd ..
-cd client && npm install && npm run build && cd ..
+cd server
+python -m venv .venv
+.venv/Scripts/python -m pip install -r requirements.txt
+cd ../client && npm install && npm run build && cd ..
 
 # 2) サーバーを起動（ポートと、許可するサブネットを指定）
 cd server
-PORT=5000 ALLOWED_CIDRS=192.168.1.0/24 npm start
+PORT=5000 ALLOWED_CIDRS=192.168.1.0/24 .venv/Scripts/python run.py
 ```
 
 Windows の PowerShell では:
@@ -29,7 +31,7 @@ Windows の PowerShell では:
 cd server
 $env:PORT = "5000"
 $env:ALLOWED_CIDRS = "192.168.1.0/24"
-npm start
+.venv\Scripts\python run.py
 ```
 
 あとは各自のブラウザで、サーバー機の IP を開くだけです。
@@ -37,6 +39,12 @@ npm start
 ```
 http://192.168.1.201:5000/?room=team-a
 ```
+
+`?room=` を省略するとルーム ID が自動生成され、URL に書き戻されます。その URL を
+共有すれば同じボードに入れます（ツールバーの「招待リンク」でコピーできます）。
+
+サーバー機の IP は起動時のログに表示されます。IP が変わると URL も変わるので、
+ルーターで固定 IP を割り当てておくと安定します。
 
 > **ポート番号は、ファイアウォールで受信が許可されているものを選びます。**
 > Windows は既定で外部からの接続を遮断するため、許可されていないポートを使うと
@@ -50,18 +58,11 @@ http://192.168.1.201:5000/?room=team-a
 >
 > 空なら、管理者権限のある人に受信許可を追加してもらう必要があります（後述）。
 
-`?room=` を省略するとルーム ID が自動生成され、URL に書き戻されます。その URL を
-共有すれば同じボードに入れます（ツールバーの「招待リンク」でコピーできます）。
-
-サーバー機の IP は `ipconfig`（Windows）/ `ifconfig`（macOS）で確認してください。
-IP が変わると URL も変わるので、ルーターで固定 IP を割り当てておくと安定します。
-
 ### アクセス範囲の制限について
 
 `ALLOWED_CIDRS` で指定した範囲**以外からの接続は 403 で拒否**します（HTTP も
-WebSocket も）。未設定の場合はプライベートアドレス全体
-(`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`) と
-ループバックを許可します。複数指定はカンマ区切り、単一ホストは `/32` です。
+WebSocket も）。未設定の場合はプライベートアドレス全体とループバックを許可します。
+複数指定はカンマ区切り、単一ホストは `/32`、IPv6 の CIDR もそのまま書けます。
 
 ```bash
 ALLOWED_CIDRS=192.168.1.0/24,192.168.2.0/24   # 2 つのサブネット
@@ -80,8 +81,7 @@ ALLOWED_CIDRS=192.168.1.50/32                 # 1 台だけ
 
 ### つながらないとき
 
-サーバー起動時のログに、共有すべき URL と、ファイアウォールの設定コマンドが
-表示されます。まずそこを確認してください。
+サーバー起動時のログに、共有すべき URL が表示されます。まずそこを確認してください。
 
 **1. Windows ファイアウォールの受信許可（最初にこれを疑う）**
 
@@ -98,11 +98,6 @@ Windows は既定で外部からの接続を遮断します。とくに Wi-Fi �
 New-NetFirewallRule -DisplayName "Realtime Whiteboard" -Direction Inbound `
   -Protocol TCP -LocalPort 5000 -Action Allow -Profile Any -RemoteAddress LocalSubnet
 ```
-
-`-RemoteAddress LocalSubnet` で同じサブネットからの接続だけに限定しています。
-現在の状態は `Get-NetConnectionProfile`（ネットワークの分類）と
-`Get-NetFirewallRule -DisplayName "Realtime Whiteboard"` で確認できます。
-元に戻すときは `Remove-NetFirewallRule -DisplayName "Realtime Whiteboard"` です。
 
 **2. 切り分け** — 同僚のブラウザで `http://<サーバー機の IP>:<ポート>/health` を開きます。
 
@@ -122,14 +117,15 @@ New-NetFirewallRule -DisplayName "Realtime Whiteboard" -Direction Inbound `
 **4. その他**
 
 - サーバー機と同僚が別のサブネット（例: 社員用と来客用で分かれている）にいないか
-- `ipconfig` で確認した IP と、共有した URL の IP が一致しているか
+- 起動ログに出ている IP と、共有した URL の IP が一致しているか
 - スリープでサーバー機が落ちていないか（電源設定でスリープを無効にしておく）
 
 ### 保存について
 
 - 保存先: `server/data/boards.json`（`DATA_FILE` 環境変数で変更可）
-- 書き込みは 1 秒間隔にまとめ、一時ファイル + rename で原子的に行うため、
+- 書き込みは 1 秒間隔にまとめ、一時ファイル + 置換で原子的に行うため、
   書き込み途中で落ちても壊れたファイルは残りません
+- 読めない状態のファイルは `boards.broken-<時刻>` に退避し、空で起動します
 - バックアップはこの JSON を控えておけば十分です
 - ルームあたり 3000 要素を超えると古いものから消えます
 - 「全消去」した内容は復元できません
@@ -139,11 +135,11 @@ New-NetFirewallRule -DisplayName "Realtime Whiteboard" -Direction Inbound `
 ターミナルを 2 つ開いて、それぞれで実行します。
 
 ```bash
-cd server && npm run dev     # http://localhost:3001（ファイル変更で自動再起動）
-cd client && npm run dev     # http://localhost:5173（LAN にも公開されます）
+cd server && .venv/Scripts/python run.py     # http://localhost:5000
+cd client && npm run dev                     # http://localhost:5173（LAN にも公開されます）
 ```
 
-開発時のクライアントは、**ページを開いたホスト名の :3001** に自動で接続します
+開発時のクライアントは、**ページを開いたホスト名の :5000** に自動で接続します
 （`VITE_SERVER_PORT` で変更可）。`http://192.168.1.201:5173/` を他の PC から開いても
 そのままつながります。接続先を完全に固定したい場合だけ `client/.env` に
 `VITE_SERVER_URL` を設定してください（`client/.env.example` を参照）。
@@ -151,8 +147,18 @@ cd client && npm run dev     # http://localhost:5173（LAN にも公開されま
 ビルド版はサーバー自身が配信するため、**ポート番号によらず同じオリジン**に接続します。
 `PORT` を変えてもクライアントの再ビルドは不要です。
 
-サーバーの状態は `http://localhost:<ポート>/health` で確認できます（許可範囲、保存先、
-ルームごとの要素数と接続人数）。
+### テストと型チェック
+
+```bash
+cd server
+.venv/Scripts/python -m pip install -r requirements-dev.txt
+.venv/Scripts/python -m pytest          # アクセス制御・保存・サニタイズ
+
+cd ../client
+npm run typecheck                        # tsc --noEmit（strict）
+npm run lint
+npm run build                            # 型チェックを通してからビルドします
+```
 
 ## 使える機能
 
@@ -170,13 +176,14 @@ cd client && npm run dev     # http://localhost:5173（LAN にも公開されま
 
 ## 実装状況
 
-- [x] 1. Canvas へのフリーハンド描画（色・太さのツールバー）
-- [x] 2. socket.io によるルーム単位のリアルタイム同期
-- [x] 3a. undo / redo、消しゴム、文字入力、文字の移動
+- [x] Canvas へのフリーハンド描画（色・太さのツールバー）
+- [x] socket.io によるルーム単位のリアルタイム同期
+- [x] undo / redo、消しゴム、文字入力、文字の移動
 - [x] LAN 限定アクセス + ディスクへの永続化
-- [ ] 3b. 図形描画（四角・丸・矢印）
-- [ ] 4. 参加者カーソルのリアルタイム共有
-- [ ] 5. PNG / SVG エクスポート
+- [x] TypeScript / Python への移行
+- [ ] 図形描画（四角・丸・矢印）
+- [ ] 参加者カーソルのリアルタイム共有
+- [ ] PNG / SVG エクスポート
 
 ## 通信イベント
 
@@ -193,6 +200,9 @@ cd client && npm run dev     # http://localhost:5173（LAN にも公開されま
 | `item:remove` | 双方向 | 要素を 1 つ取り消す（戻る操作） |
 | `board:clear` | 双方向 | ルームの全消去 |
 
+型は `client/src/types.ts` の `ServerToClientEvents` / `ClientToServerEvents` で
+定義しており、イベント名と引数の取り違えはコンパイル時に検出されます。
+
 履歴は「線」と「文字」を同じ 1 本の配列（`items`）として順番どおりに保持します。
 消しゴムは `erase: true` の線として同じ配列に入り、描画時に
 `globalCompositeOperation = 'destination-out'` で下の描画を削ります。
@@ -201,12 +211,27 @@ cd client && npm run dev     # http://localhost:5173（LAN にも公開されま
 「戻る」は自分の操作を並べたアクション列（`{type: 'add'}` / `{type: 'move'}`）を
 さかのぼる方式なので、文字の移動も 1 手として取り消せます。
 
+クライアントから届くペイロードは、サーバー側 `app/items.py` で**既知のフィールドだけを
+使って組み立て直してから**ルームに入ります。型・範囲・長さが合わないものは捨てるか
+既定値に丸めるので、壊れた入力でサーバーが落ちることはありません。
+
+## サーバーの構成
+
+| ファイル | 役割 |
+|---|---|
+| `app/main.py` | Socket.IO のイベント処理、FastAPI の health と静的配信、アクセス制限 |
+| `app/access.py` | 接続元アドレスの判定（`ipaddress` による CIDR マッチ） |
+| `app/items.py` | 受信ペイロードのサニタイズ、ルーム ID の正規化 |
+| `app/board.py` | ルームの状態（要素の並び、描画中の線） |
+| `app/store.py` | ディスクへの保存と復元（デバウンス + 原子的な書き込み） |
+
 ## 環境変数（サーバー）
 
 | 変数 | 既定値 | 内容 |
 |---|---|---|
-| `PORT` | `3001` | 待ち受けポート（ファイアウォールで許可されたものを選ぶ） |
+| `PORT` | `5000` | 待ち受けポート（ファイアウォールで許可されたものを選ぶ） |
 | `HOST` | `0.0.0.0` | 待ち受けアドレス |
-| `ALLOWED_CIDRS` | プライベートアドレス全体 | 接続を許可する範囲（カンマ区切り、IPv4） |
+| `ALLOWED_CIDRS` | プライベートアドレス全体 | 接続を許可する範囲（カンマ区切り） |
 | `DATA_FILE` | `server/data/boards.json` | 保存先 |
 | `CLIENT_ORIGIN` | `*` | CORS の許可オリジン |
+| `LOG_LEVEL` | `warning` | uvicorn のログレベル |

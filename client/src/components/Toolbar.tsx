@@ -1,18 +1,44 @@
 import { useState } from 'react'
+import type { CSSProperties } from 'react'
+import type { ConnectionStatus, Tool } from '../types'
 
 const COLORS = ['#111827', '#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6']
 
-const TOOLS = [
+const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: 'pen', label: 'ペン', hint: 'ドラッグで描画' },
   { id: 'eraser', label: '消しゴム', hint: 'なぞった部分を消す' },
   { id: 'text', label: '文字', hint: 'クリックで入力 / 既存の文字はドラッグで移動' },
 ]
 
-const STATUS_LABEL = {
+const STATUS_LABEL: Record<ConnectionStatus, string> = {
   connecting: '接続中…',
   connected: '接続済み',
   disconnected: '切断',
   offline: 'サーバー未接続',
+}
+
+export interface SizeControl {
+  label: string
+  min: number
+  max: number
+  value: number
+}
+
+interface ToolbarProps {
+  tool: Tool
+  onToolChange: (tool: Tool) => void
+  color: string
+  onColorChange: (color: string) => void
+  sizeControl: SizeControl
+  onSizeChange: (size: number) => void
+  canUndo: boolean
+  canRedo: boolean
+  onUndo: () => void
+  onRedo: () => void
+  onClear: () => void
+  room: string
+  status: ConnectionStatus
+  peers: number
 }
 
 export default function Toolbar({
@@ -30,7 +56,7 @@ export default function Toolbar({
   room,
   status,
   peers,
-}) {
+}: ToolbarProps) {
   const [copied, setCopied] = useState(false)
 
   const copyLink = async () => {
@@ -66,7 +92,7 @@ export default function Toolbar({
             key={value}
             type="button"
             className={`swatch${value === color ? ' swatch--active' : ''}`}
-            style={{ '--swatch': value }}
+            style={{ '--swatch': value } as CSSProperties}
             aria-label={`色 ${value}`}
             aria-pressed={value === color}
             onClick={() => onColorChange(value)}
@@ -118,7 +144,7 @@ export default function Toolbar({
       </div>
 
       <div className="toolbar__room">
-        <span className={`status status--${status}`}>{STATUS_LABEL[status] ?? status}</span>
+        <span className={`status status--${status}`}>{STATUS_LABEL[status]}</span>
         <span className="toolbar__room-name">room: {room}</span>
         <span className="toolbar__peers">{peers}人</span>
         <button type="button" className="button" onClick={copyLink}>

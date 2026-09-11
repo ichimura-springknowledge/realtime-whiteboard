@@ -3,26 +3,27 @@ import Canvas from './components/Canvas'
 import Toolbar from './components/Toolbar'
 import { useBoard } from './hooks/useBoard'
 import { resolveRoomFromUrl } from './lib/room'
+import type { Tool } from './types'
 import './App.css'
 
 // The single size slider means a different thing for each tool.
-const SIZE_RANGE = {
+const SIZE_RANGE: Record<Tool, { label: string; min: number; max: number }> = {
   pen: { label: '太さ', min: 1, max: 48 },
   eraser: { label: '消しゴム', min: 4, max: 96 },
   text: { label: '文字サイズ', min: 12, max: 96 },
 }
 
 export default function App() {
-  const [tool, setTool] = useState('pen')
+  const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState('#111827')
-  const [sizes, setSizes] = useState({ pen: 8, eraser: 24, text: 24 })
+  const [sizes, setSizes] = useState<Record<Tool, number>>({ pen: 8, eraser: 24, text: 24 })
   const room = useMemo(() => resolveRoomFromUrl(), [])
   const board = useBoard(room)
 
   const { undo, redo } = board
 
   useEffect(() => {
-    const onKeyDown = (event) => {
+    const onKeyDown = (event: KeyboardEvent) => {
       const isUndoKey = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z'
       if (!isUndoKey) return
       // Let the browser handle undo while text is being typed.
@@ -36,7 +37,7 @@ export default function App() {
   }, [undo, redo])
 
   const sizeControl = { ...SIZE_RANGE[tool], value: sizes[tool] }
-  const handleSizeChange = (value) => setSizes((prev) => ({ ...prev, [tool]: value }))
+  const handleSizeChange = (value: number) => setSizes((prev) => ({ ...prev, [tool]: value }))
 
   return (
     <div className="app">
