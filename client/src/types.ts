@@ -38,7 +38,18 @@ export interface ShapeItem {
   y2: number
 }
 
-export type BoardItem = StrokeItem | TextItem | ShapeItem
+/** A pasted or dropped picture. `src` is a path this server handed out. */
+export interface ImageItem {
+  id: string
+  type: 'image'
+  src: string
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+export type BoardItem = StrokeItem | TextItem | ShapeItem | ImageItem
 
 /** Items that are shown while someone is still drawing them. */
 export type LiveItem = StrokeItem | ShapeItem

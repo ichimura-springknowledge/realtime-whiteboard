@@ -1,5 +1,5 @@
 import { getStroke } from 'perfect-freehand'
-import type { BoardItem, Point, ShapeItem, StrokeItem, TextItem } from '../types'
+import type { BoardItem, ImageItem, Point, ShapeItem, StrokeItem, TextItem } from '../types'
 
 export const TEXT_FONT = "system-ui, 'Segoe UI', 'Hiragino Sans', 'Noto Sans JP', sans-serif"
 export const TEXT_LINE_HEIGHT = 1.3
@@ -88,6 +88,52 @@ export function drawText(ctx: CanvasRenderingContext2D, item: TextItem): void {
   ctx.restore()
 }
 
+/**
+ * Pictures are loaded once and kept, keyed by their path. The path is the hash
+ * of the contents, so a cached entry can never be stale.
+ */
+const imageCache = new Map<string, HTMLImageElement>()
+
+export interface ImageLoader {
+  /** Resolves an item's src to a URL this page can fetch. */
+  resolve: (src: string) => string
+  /** Called once a picture finishes loading, so the board can be redrawn. */
+  onLoad: () => void
+}
+
+let loader: ImageLoader | null = null
+
+export function setImageLoader(next: ImageLoader): void {
+  loader = next
+}
+
+/** The picture for an item, or null while it is still loading. */
+export function getImage(src: string): HTMLImageElement | null {
+  const cached = imageCache.get(src)
+  if (cached) return cached.complete && cached.naturalWidth > 0 ? cached : null
+  if (!loader) return null
+
+  const element = new Image()
+  imageCache.set(src, element)
+  element.addEventListener('load', () => loader?.onLoad(), { once: true })
+  element.addEventListener('error', () => loader?.onLoad(), { once: true })
+  element.src = loader.resolve(src)
+  return null
+}
+
+export function drawImage(ctx: CanvasRenderingContext2D, item: ImageItem): void {
+  const picture = getImage(item.src)
+  if (!picture) {
+    // A placeholder keeps the layout stable while the bytes are on their way.
+    ctx.save()
+    ctx.fillStyle = 'rgba(17, 24, 39, 0.06)'
+    ctx.fillRect(item.x, item.y, item.width, item.height)
+    ctx.restore()
+    return
+  }
+  ctx.drawImage(picture, item.x, item.y, item.width, item.height)
+}
+
 export function drawItem(
   ctx: CanvasRenderingContext2D,
   item: BoardItem,
@@ -95,6 +141,7 @@ export function drawItem(
 ): void {
   if (item.type === 'text') drawText(ctx, item)
   else if (item.type === 'shape') drawShape(ctx, item)
+  else if (item.type === 'image') drawImage(ctx, item)
   else drawStroke(ctx, item, options)
 }
 
@@ -122,17 +169,22 @@ export function textBounds(ctx: CanvasRenderingContext2D, item: TextItem): TextB
   }
 }
 
-/** Topmost text item under the given point, or null. Strokes are not movable. */
-export function hitTestText(
+export type MovableItem = TextItem | ImageItem
+
+/** Topmost text or picture under the point, or null. Strokes cannot be moved. */
+export function hitTestMovable(
   ctx: CanvasRenderingContext2D,
   items: readonly BoardItem[],
   x: number,
   y: number,
-): TextItem | null {
+): MovableItem | null {
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i]!
-    if (item.type !== 'text') continue
-    const box = textBounds(ctx, item)
+    let box: TextBounds
+    if (item.type === 'text') box = textBounds(ctx, item)
+    else if (item.type === 'image') box = { x: item.x, y: item.y, width: item.width, height: item.height }
+    else continue
+
     if (
       x >= box.x - HIT_PADDING &&
       x <= box.x + box.width + HIT_PADDING &&

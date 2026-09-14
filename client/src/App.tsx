@@ -2,16 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Canvas from './components/Canvas'
 import PeerCursors from './components/PeerCursors'
 import Toolbar from './components/Toolbar'
-import { useBoard } from './hooks/useBoard'
+import { serverOrigin, useBoard } from './hooks/useBoard'
+import { setImageLoader } from './lib/draw'
 import {
   canvasToPngBlob,
   downloadBlob,
+  embedImages,
   exportFilename,
   renderToCanvas,
   renderToSvg,
 } from './lib/export'
+import { imageUrl, isSupportedImage, uploadImage } from './lib/images'
 import { resolveRoomFromUrl } from './lib/room'
-import type { Tool } from './types'
+import type { Position, Tool } from './types'
 import './App.css'
 
 /** Tools that share one slider value: every shape uses the same line width. */
@@ -46,7 +49,68 @@ export default function App() {
   const room = useMemo(() => resolveRoomFromUrl(), [])
   const board = useBoard(room)
   const [exporting, setExporting] = useState(false)
+  const [busy, setBusy] = useState(false)
   const boardSizeRef = useRef({ width: 0, height: 0 })
+  const { addItem } = board
+
+  // Pictures are fetched from the board server, which in dev is a different
+  // origin from the page; a finished load has to trigger a repaint.
+  const [imageEpoch, setImageEpoch] = useState(0)
+  useEffect(() => {
+    setImageLoader({
+      resolve: (src) => imageUrl(src, serverOrigin),
+      onLoad: () => setImageEpoch((value) => value + 1),
+    })
+  }, [])
+
+  const createId = () =>
+    typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+
+  const handlePasteFiles = useCallback(
+    async (files: File[], at: Position) => {
+      const pictures = files.filter(isSupportedImage)
+      if (pictures.length === 0) {
+        window.alert('貼り付けられるのは画像 (PNG / JPEG / GIF / WebP) だけです。')
+        return
+      }
+      setBusy(true)
+      try {
+        let offset = 0
+        for (const file of pictures) {
+          const item = await uploadImage(
+            file,
+            createId(),
+            { x: at.x + offset, y: at.y + offset },
+            { serverUrl: serverOrigin },
+          )
+          addItem(item)
+          offset += 24 // several at once should not land exactly on top of each other
+        }
+      } catch (error) {
+        window.alert(`画像を貼り付けられませんでした: ${error instanceof Error ? error.message : error}`)
+      } finally {
+        setBusy(false)
+      }
+    },
+    [addItem],
+  )
+
+  const handlePasteText = useCallback(
+    (text: string, at: Position) => {
+      addItem({
+        id: createId(),
+        type: 'text',
+        x: Math.round(at.x),
+        y: Math.round(at.y),
+        text: text.slice(0, 500),
+        color,
+        size: sizes.text,
+      })
+    },
+    [addItem, color, sizes.text],
+  )
 
   const { undo, redo } = board
 
@@ -60,7 +124,7 @@ export default function App() {
       try {
         const size = boardSizeRef.current
         if (format === 'svg') {
-          const svg = renderToSvg(board.items, size)
+          const svg = renderToSvg(board.items, size, await embedImages(board.items))
           downloadBlob(
             new Blob([svg], { type: 'image/svg+xml;charset=utf-8' }),
             exportFilename(room, 'svg'),
@@ -111,7 +175,8 @@ export default function App() {
         onRedo={board.redo}
         onClear={board.clearBoard}
         onExport={handleExport}
-        exporting={exporting}
+        exporting={exporting || busy}
+        busy={busy}
         room={room}
         status={board.status}
         peers={board.peers}
@@ -126,6 +191,7 @@ export default function App() {
             items={board.items}
             liveItems={board.liveItems}
             movingIds={board.movingIds}
+            imageEpoch={imageEpoch}
             onStrokeStart={board.startStroke}
             onStrokePoints={board.appendPoints}
             onStrokeComplete={board.completeStroke}
@@ -133,6 +199,8 @@ export default function App() {
             onCursorMove={board.moveCursor}
             onCursorLeave={board.leaveCursor}
             onSizeChange={handleBoardSize}
+            onPasteFiles={handlePasteFiles}
+            onPasteText={handlePasteText}
             onAddItem={board.addItem}
             onMoveText={board.moveItem}
             onCommitMove={board.commitMove}

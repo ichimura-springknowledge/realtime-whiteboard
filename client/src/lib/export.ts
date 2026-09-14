@@ -7,7 +7,8 @@ import {
   getSvgPathFromStroke,
   strokeOptions,
 } from './draw'
-import type { BoardItem, ShapeItem, StrokeItem, TextItem } from '../types'
+import { getImage } from './draw'
+import type { BoardItem, ImageItem, ShapeItem, StrokeItem, TextItem } from '../types'
 
 export const EXPORT_BACKGROUND = '#ffffff'
 
@@ -105,7 +106,43 @@ function shapeToSvg(shape: ShapeItem): string {
  * the eraser sits outside that group and is left alone, which is exactly how
  * the eraser behaves on screen.
  */
-export function renderToSvg(items: readonly BoardItem[], size: ExportSize): string {
+function imageToSvg(item: ImageItem, embedded: Map<string, string>): string {
+  const href = embedded.get(item.src)
+  if (!href) return ''
+  return `<image href="${href}" x="${item.x}" y="${item.y}" width="${item.width}" height="${item.height}" preserveAspectRatio="none"/>`
+}
+
+/**
+ * Pictures are inlined as data URLs. An SVG that merely linked to them would
+ * only render for someone who can still reach this server.
+ */
+export async function embedImages(items: readonly BoardItem[]): Promise<Map<string, string>> {
+  const embedded = new Map<string, string>()
+  for (const item of items) {
+    if (item.type !== 'image' || embedded.has(item.src)) continue
+    const picture = getImage(item.src)
+    if (!picture) continue
+    const canvas = document.createElement('canvas')
+    canvas.width = picture.naturalWidth
+    canvas.height = picture.naturalHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) continue
+    ctx.drawImage(picture, 0, 0)
+    try {
+      embedded.set(item.src, canvas.toDataURL('image/png'))
+    } catch {
+      // A picture the canvas refuses to read out is skipped rather than failing
+      // the whole export.
+    }
+  }
+  return embedded
+}
+
+export function renderToSvg(
+  items: readonly BoardItem[],
+  size: ExportSize,
+  embedded: Map<string, string> = new Map(),
+): string {
   let content: string[] = []
   const masks: string[] = []
 
@@ -124,6 +161,7 @@ export function renderToSvg(items: readonly BoardItem[], size: ExportSize): stri
 
     if (item.type === 'text') content.push(textToSvg(item))
     else if (item.type === 'shape') content.push(shapeToSvg(item))
+    else if (item.type === 'image') content.push(imageToSvg(item, embedded))
     else content.push(strokeToSvg(item, item.color))
   }
 

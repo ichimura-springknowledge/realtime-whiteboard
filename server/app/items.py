@@ -7,6 +7,7 @@ rebuilt here from known-good fields.
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Literal, TypedDict
 
 MAX_POINTS_PER_MESSAGE = 10_000
@@ -60,7 +61,17 @@ class ShapeItem(TypedDict):
     y2: float
 
 
-BoardItem = StrokeItem | TextItem | ShapeItem
+class ImageItem(TypedDict):
+    id: str
+    type: Literal["image"]
+    src: str
+    x: float
+    y: float
+    width: float
+    height: float
+
+
+BoardItem = StrokeItem | TextItem | ShapeItem | ImageItem
 
 
 def _is_finite(value: Any) -> bool:
@@ -174,6 +185,32 @@ def sanitize_shape(raw: dict[str, Any]) -> ShapeItem | None:
     )
 
 
+# Only names this server handed out; anything else would let a board point a
+# viewer's browser at an arbitrary URL.
+_IMAGE_SRC = re.compile(r"^/images/[0-9a-f]{64}\.(png|jpg|gif|webp)$")
+
+
+def sanitize_image(raw: dict[str, Any]) -> ImageItem | None:
+    item_id = sanitize_id(raw.get("id"))
+    src = raw.get("src")
+    if item_id is None or not isinstance(src, str) or not _IMAGE_SRC.match(src):
+        return None
+    if not all(_is_finite(raw.get(key)) for key in ("x", "y", "width", "height")):
+        return None
+    width = clamp(raw.get("width"), 1, 10000, 200)
+    height = clamp(raw.get("height"), 1, 10000, 200)
+
+    return ImageItem(
+        id=item_id,
+        type="image",
+        src=src,
+        x=round_coord(raw["x"]),
+        y=round_coord(raw["y"]),
+        width=round_coord(width),
+        height=round_coord(height),
+    )
+
+
 def sanitize_item(raw: Any) -> BoardItem | None:
     if not isinstance(raw, dict):
         return None
@@ -182,7 +219,14 @@ def sanitize_item(raw: Any) -> BoardItem | None:
         return sanitize_text(raw)
     if kind == "shape":
         return sanitize_shape(raw)
+    if kind == "image":
+        return sanitize_image(raw)
     return sanitize_stroke(raw)
+
+
+def image_name(src: str) -> str | None:
+    """The stored file name behind an image item's src."""
+    return src.rsplit("/", 1)[-1] if _IMAGE_SRC.match(src) else None
 
 
 def normalize_room_id(value: Any) -> str:

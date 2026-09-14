@@ -42,6 +42,7 @@ interface ToolbarProps {
   onClear: () => void
   onExport: (format: 'png' | 'svg') => void
   exporting: boolean
+  busy: boolean
   room: string
   status: ConnectionStatus
   peers: number
@@ -61,6 +62,7 @@ export default function Toolbar({
   onClear,
   onExport,
   exporting,
+  busy,
   room,
   status,
   peers,
@@ -174,6 +176,7 @@ export default function Toolbar({
       </div>
 
       <div className="toolbar__room">
+        {busy && <span className="toolbar__busy">画像を送信中…</span>}
         <span className={`status status--${status}`}>{STATUS_LABEL[status]}</span>
         <span className="toolbar__room-name">room: {room}</span>
         <span className="toolbar__peers">{peers}人</span>

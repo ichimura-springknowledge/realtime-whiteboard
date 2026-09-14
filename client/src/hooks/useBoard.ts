@@ -36,6 +36,9 @@ function resolveServerUrl(): string | undefined {
 
 const SERVER_URL = resolveServerUrl()
 
+/** Undefined when the page is served by the board server itself. */
+export const serverOrigin = SERVER_URL
+
 const withoutItem = (
   items: Record<string, LiveItem>,
   id: string,

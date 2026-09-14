@@ -44,12 +44,15 @@ class Room:
         self.items.remove(item)
         return True
 
+    #: Item kinds that carry a position, and so can be dragged around.
+    MOVABLE = frozenset({"text", "image"})
+
     def move(self, raw_id: Any, x: Any, y: Any) -> BoardItem | None:
         item_id = sanitize_id(raw_id)
         if item_id is None or not _is_finite(x) or not _is_finite(y):
             return None
         item = self.find(item_id)
-        if item is None or item["type"] != "text":
+        if item is None or item["type"] not in self.MOVABLE:
             return None
         item["x"] = round_coord(x)
         item["y"] = round_coord(y)

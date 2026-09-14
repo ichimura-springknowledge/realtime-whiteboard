@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent } from 'react'
-import { drawItem, hitTestText, pointFromEvent } from '../lib/draw'
+import type { DragEvent as ReactDragEvent, PointerEvent as ReactPointerEvent } from 'react'
+import { drawItem, hitTestMovable, pointFromEvent } from '../lib/draw'
 import type {
   BoardItem,
   LiveItem,
@@ -39,6 +39,8 @@ interface CanvasProps {
   items: BoardItem[]
   liveItems: LiveItem[]
   movingIds: string[]
+  /** Bumped whenever a picture finishes loading. */
+  imageEpoch: number
   onStrokeStart: (stroke: StrokeItem) => void
   onStrokePoints: (id: string, points: Point[]) => void
   onStrokeComplete: (stroke: StrokeItem) => void
@@ -46,6 +48,8 @@ interface CanvasProps {
   onCursorMove: (x: number, y: number) => void
   onCursorLeave: () => void
   onSizeChange: (size: { width: number; height: number }) => void
+  onPasteFiles: (files: File[], at: Position) => void
+  onPasteText: (text: string, at: Position) => void
   onAddItem: (item: BoardItem) => void
   onMoveText: (id: string, x: number, y: number) => void
   onCommitMove: (id: string, from: Position, to: Position) => void
@@ -59,6 +63,7 @@ function Canvas({
   items,
   liveItems,
   movingIds,
+  imageEpoch,
   onStrokeStart,
   onStrokePoints,
   onStrokeComplete,
@@ -66,6 +71,8 @@ function Canvas({
   onCursorMove,
   onCursorLeave,
   onSizeChange,
+  onPasteFiles,
+  onPasteText,
   onAddItem,
   onMoveText,
   onCommitMove,
@@ -77,6 +84,7 @@ function Canvas({
   const dragRef = useRef<DragState | null>(null)
   const sentPointsRef = useRef(0)
   const cursorRef = useRef<Position | null>(null)
+  const lastPointerRef = useRef<Position | null>(null)
   const frameRef = useRef(0)
   const cursorFrameRef = useRef(0)
   const itemsRef = useRef(items)
@@ -271,6 +279,58 @@ function Canvas({
     scheduleRedraw()
   }, [items, liveItems, movingIds, scheduleRedraw])
 
+  /** Where a pasted item should land: under the pointer, else the middle. */
+  const dropPoint = useCallback((): Position => {
+    const canvas = canvasRef.current
+    const pointer = lastPointerRef.current
+    if (pointer) return pointer
+    const rect = canvas?.getBoundingClientRect()
+    return { x: (rect?.width ?? 800) / 2, y: (rect?.height ?? 600) / 2 }
+  }, [])
+
+  // Ctrl+V anywhere on the page, as long as no text box has the focus.
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent) => {
+      const target = event.target
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return
+
+      const files = [...(event.clipboardData?.files ?? [])]
+      if (files.length > 0) {
+        event.preventDefault()
+        onPasteFiles(files, dropPoint())
+        return
+      }
+      const text = event.clipboardData?.getData('text/plain')?.trim()
+      if (text) {
+        event.preventDefault()
+        onPasteText(text, dropPoint())
+      }
+    }
+    window.addEventListener('paste', onPaste)
+    return () => window.removeEventListener('paste', onPaste)
+  }, [onPasteFiles, onPasteText, dropPoint])
+
+  const handleDragOver = (event: ReactDragEvent<HTMLCanvasElement>) => {
+    if (!event.dataTransfer.types.includes('Files')) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+  }
+
+  const handleDrop = (event: ReactDragEvent<HTMLCanvasElement>) => {
+    const files = [...(event.dataTransfer?.files ?? [])]
+    if (files.length === 0) return
+    event.preventDefault()
+    const rect = event.currentTarget.getBoundingClientRect()
+    onPasteFiles(files, { x: event.clientX - rect.left, y: event.clientY - rect.top })
+  }
+
+  useEffect(() => {
+    // A picture finished loading, and the cached layer is holding its
+    // placeholder — that layer has to be drawn again.
+    staticFromRef.current = 0
+    scheduleRedraw()
+  }, [imageEpoch, scheduleRedraw])
+
   const commitDraft = (pending: TextDraft | null) => {
     const value = pending?.text.trim()
     if (!pending || !value) return
@@ -305,7 +365,7 @@ function Canvas({
       // canvas right after the editor mounts, blurring it away instantly.
       event.preventDefault()
 
-      const hit = hitTestText(ctx, itemsRef.current, x, y)
+      const hit = hitTestMovable(ctx, itemsRef.current, x, y)
       if (hit) {
         // Grabbing existing text moves it instead of starting a new one.
         closeDraft(draft)
@@ -365,7 +425,9 @@ function Canvas({
     if (!canvas || !ctx) return
 
     const rect = canvas.getBoundingClientRect()
-    cursorRef.current = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    const at = { x: event.clientX - rect.left, y: event.clientY - rect.top }
+    cursorRef.current = at
+    lastPointerRef.current = at
     scheduleCursor()
 
     const drag = dragRef.current
@@ -392,7 +454,7 @@ function Canvas({
       if (tool === 'text') {
         // Hint that the text under the pointer can be picked up. Set straight on
         // the element, so hovering never re-renders the canvas.
-        const over = hitTestText(
+        const over = hitTestMovable(
           ctx,
           itemsRef.current,
           event.clientX - rect.left,
@@ -459,6 +521,8 @@ function Canvas({
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
         onPointerLeave={onCursorLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
       />
       {draft && (
         <TextEditor

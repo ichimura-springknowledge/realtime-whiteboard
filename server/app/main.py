@@ -17,12 +17,13 @@ from urllib.parse import parse_qs
 
 import socketio
 from fastapi import FastAPI, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from .access import AccessGuard
 from .board import Rooms
-from .items import _is_finite, normalize_room_id, sanitize_item, sanitize_points
+from .images import ImageStore, ImageTooLargeError, UnsupportedImageError, content_type_for
+from .items import _is_finite, image_name, normalize_room_id, sanitize_item, sanitize_points
 from .store import BoardStore
 
 SERVER_DIR = Path(__file__).resolve().parent.parent
@@ -32,6 +33,7 @@ PORT = int(os.environ.get("PORT") or 5000)
 HOST = os.environ.get("HOST") or "0.0.0.0"
 ORIGIN = os.environ.get("CLIENT_ORIGIN") or "*"
 DATA_FILE = Path(os.environ.get("DATA_FILE") or SERVER_DIR / "data" / "boards.json")
+IMAGE_DIR = Path(os.environ.get("IMAGE_DIR") or DATA_FILE.parent / "images")
 
 def _use_utf8_console() -> None:
     """Windows consoles default to a legacy code page, which mangles the
@@ -56,6 +58,7 @@ log = logging.getLogger("whiteboard")
 guard = AccessGuard(os.environ.get("ALLOWED_CIDRS"))
 store = BoardStore(DATA_FILE)
 rooms = Rooms(store.load())
+images = ImageStore(IMAGE_DIR)
 
 # Refusals are logged once per address, so a colleague who cannot get in can be
 # told straight away whether their request even reached this machine.
@@ -96,8 +99,24 @@ def _persist(*, urgent: bool = False) -> None:
     store.save(rooms.snapshot(), urgent=urgent)
 
 
+def _referenced_images() -> set[str]:
+    names = set()
+    for _, items in rooms.items():
+        for item in items:
+            if item["type"] == "image":
+                name = image_name(item["src"])
+                if name:
+                    names.add(name)
+    return names
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Pictures outlive the boards that referenced them unless something sweeps
+    # up; startup is the one moment nothing is being edited.
+    removed = images.collect_garbage(_referenced_images())
+    if removed:
+        print(f"  使われていない画像を {removed} 件削除しました", flush=True)
     _announce()
     yield
     await store.flush()
@@ -129,6 +148,32 @@ async def health() -> dict[str, Any]:
             for room_id, items in rooms.items()
         ],
     }
+
+
+@api.post("/images")
+async def upload_image(request: Request) -> JSONResponse:
+    """Takes the raw bytes of a pasted or dropped picture."""
+    body = await request.body()
+    try:
+        name = images.save(body)
+    except ImageTooLargeError as error:
+        return JSONResponse({"error": str(error)}, status_code=413)
+    except UnsupportedImageError as error:
+        return JSONResponse({"error": str(error)}, status_code=415)
+    return JSONResponse({"src": f"/images/{name}"})
+
+
+@api.get("/images/{name}")
+async def serve_image(name: str):
+    path = images.resolve(name)
+    if path is None:
+        return PlainTextResponse("その画像はありません。", status_code=404)
+    return FileResponse(
+        path,
+        media_type=content_type_for(name),
+        # The name is the hash of the contents, so it can never mean anything else.
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
 
 
 # Serve the built client when it exists, so the whole board is one address.
@@ -328,9 +373,12 @@ def _say(message: str) -> None:
 
 def _announce() -> None:
     total = sum(len(items) for _, items in rooms.items())
+    pictures = len(_referenced_images())
     _say(f"whiteboard server listening on port {PORT} (bound to {HOST})")
     _say(f"  接続を許可する範囲: {guard.describe()}")
     _say(f"  保存先: {DATA_FILE} ({len(list(rooms.items()))} ルーム / {total} 要素を復元)")
+    if pictures:
+        _say(f"  画像: {IMAGE_DIR} ({pictures} 件)")
     if not (CLIENT_DIST / "index.html").exists():
         _say("  クライアント: 未ビルド (client で npm run build すると同じポートで配信します)")
     _say("  同僚に共有する URL:")
