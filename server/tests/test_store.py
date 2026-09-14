@@ -140,3 +140,51 @@ def test_room_lookup_tracks_removal_and_clear():
 def test_restored_rooms_are_searchable():
     rooms = Rooms({"a": [dict(STROKE), dict(TEXT)]})
     assert rooms.get("a").find("t1") is not None
+
+
+async def test_a_finished_stroke_is_written_at_once_after_a_quiet_spell(tmp_path):
+    """The common case: someone draws, and a moment later the process is killed."""
+    path = tmp_path / "boards.json"
+    store = BoardStore(path, debounce_seconds=1.0)
+
+    store.save({"a": [STROKE]}, urgent=True)
+    await asyncio.sleep(0.05)  # far inside the normal debounce window
+    assert json.loads(path.read_text(encoding="utf-8"))["rooms"]["a"] == [STROKE]
+
+
+async def test_a_burst_of_urgent_saves_still_coalesces(tmp_path):
+    path = tmp_path / "boards.json"
+    store = BoardStore(path, debounce_seconds=1.0)
+
+    store.save({"a": [STROKE]}, urgent=True)
+    await asyncio.sleep(0.05)
+    for index in range(20):
+        store.save({"a": [STROKE, {**TEXT, "id": f"t{index}"}]}, urgent=True)
+    assert len(json.loads(path.read_text(encoding="utf-8"))["rooms"]["a"]) == 1  # not yet
+
+    await asyncio.sleep(0.2)
+    assert len(json.loads(path.read_text(encoding="utf-8"))["rooms"]["a"]) == 2
+
+
+async def test_drag_updates_do_not_bring_the_write_forward(tmp_path):
+    """Positions from a drag arrive constantly; they keep the slow schedule."""
+    path = tmp_path / "boards.json"
+    store = BoardStore(path, debounce_seconds=0.3)
+
+    for _ in range(30):
+        store.save({"a": [STROKE]})
+    await asyncio.sleep(0.1)
+    assert not path.exists()
+
+    await asyncio.sleep(0.3)
+    assert json.loads(path.read_text(encoding="utf-8"))["rooms"]["a"] == [STROKE]
+
+
+async def test_an_urgent_save_overtakes_a_pending_slow_one(tmp_path):
+    path = tmp_path / "boards.json"
+    store = BoardStore(path, debounce_seconds=2.0)
+
+    store.save({"a": [STROKE]})  # slow: would land in 2 seconds
+    store.save({"a": [STROKE, TEXT]}, urgent=True)
+    await asyncio.sleep(0.1)
+    assert len(json.loads(path.read_text(encoding="utf-8"))["rooms"]["a"]) == 2

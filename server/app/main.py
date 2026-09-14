@@ -91,8 +91,9 @@ def _peer_count(room_id: str) -> int:
     return sum(1 for _ in sio.manager.get_participants("/", room_id))
 
 
-def _persist() -> None:
-    store.save(rooms.snapshot())
+def _persist(*, urgent: bool = False) -> None:
+    """`urgent` for changes worth keeping; plain for the flood from a drag."""
+    store.save(rooms.snapshot(), urgent=urgent)
 
 
 @asynccontextmanager
@@ -234,7 +235,7 @@ async def stroke_end(sid: str, raw: Any) -> None:
     room.live.pop(sid, None)
     room.append(stroke)
     await sio.emit("item:add", stroke, room=room_id, skip_sid=sid)
-    _persist()
+    _persist(urgent=True)
 
 
 @sio.on("item:add")
@@ -247,7 +248,7 @@ async def item_add(sid: str, raw: Any) -> None:
     room.live.pop(sid, None)
     room.append(item)
     await sio.emit("item:add", item, room=room_id, skip_sid=sid)
-    _persist()
+    _persist(urgent=True)
 
 
 @sio.on("item:move")
@@ -276,7 +277,7 @@ async def item_remove(sid: str, payload: Any) -> None:
     if not room.remove(payload.get("id")):
         return
     await sio.emit("item:remove", {"id": payload["id"]}, room=room_id, skip_sid=sid)
-    _persist()
+    _persist(urgent=True)
 
 
 @sio.on("board:clear")
@@ -284,7 +285,7 @@ async def board_clear(sid: str, *_args: Any) -> None:
     room_id, room = await _room_of(sid)
     room.clear()
     await sio.emit("board:clear", room=room_id)
-    _persist()
+    _persist(urgent=True)
 
 
 @sio.event
